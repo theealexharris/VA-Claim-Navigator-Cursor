@@ -1,0 +1,40 @@
+Recode “va claim navigator” main page with the following:
+Remove “lay statement builder” box from page
+Remove “Buddy statement generator” box from page
+Remove “Appeals & Supplemental Hub” box from page
+Remove “TDIU Calculator” box from page
+
+Recode the “dashboard” feature page with the following:
+Recode the Navigator to have all pre-filled text on all pages to have a slightly larger font size. Keep current coloring and current features.
+Recode the Navigator to have all lettering that is inputted into feature boxes, have a slightly larger font, and bold it.
+Recode the Navigator to automatically go to the “service history” feature page, after the “save Changes,” feature tab is clicked on.
+Recode the Navigator to add a “Back,” feature tab, placed on the left lower side of the page, keeping it even to the “Save Changes,” feature tab, to prevent the tabs looking off set.
+Code the Navigator display the numerical number of active claims, to be displayed on the Dashboard “Active Claims,” feature box. Code the Navigator to automatically, create a number in the “Active Claims,” feature box, immediately after the “Start New Claim,” feature tab, is clicked on, to start a new claim.
+Recode the Navigator “Service History” feature box, to have the “Date Entered” must be prior to the “date separated”. Code the Navigator to create a red highlight box with the text, “date cannot be prior to entry date,” when the “date separated,” feature tab is before the “date entered,” feature tab.
+Recode the Navigator to add a “Back,” feature tab, placed on the left lower side of the page, keeping it even to the “Save Service Details,” feature tab, aligned equally.
+
+
+Code the Navigator “Medical History & Conditions” feature box to add a “Are you currently service connect,” feature tab, placed in the center of the page, above the “Current Diagnoses,” feature box. Code to have the feature tab, to create a drop-down menu with two options to click on. Option one will have the text “Yes,” and the second option with have the text "No.” Then Code the Navigator to create an additional drop-down box only if the tab “Yes,” is clicked on. Then Code the Navigator to have a box feature, that can be filled in with a three-digit space place holder, and a pre-populated percent (%) symbol just right of the third digit. Then code the Navigator to automatically, display the numerical percentage, on the dashboard, main page, inside the “Current Rating,” feature box, once the numerical percentage is placed and the “Save All Changes,” tab has been clicked on.
+Code the Navigator to enable the dashboard “Action Required,” feature box, when data in incorrect. Enable the current “Fix issue,” feature tab, so when the tab is clicked on, the “fix issue,” tab will inform the user of the issue and prompt the user to the feature that needs to be addressed and resolved.
+Code the Navigator to enable the dashboard “Completion Status,” feature page, to automatically track the live completion status of the claim, as the user mover further along in the “Claim Builder,” feature pages, within the Navigator.
+Code the Navigator to “Add Condition,” feature tab, to be moved from the top right-hand corner of the page, and moved to the bottom center of the page, in between the “Back” feature tab and the “continue,” feature tab. Keep all three feature tabs equally spaced apart to look uniformed.
+Code the Navigator to automatically go back to the beginning of the “Tell us about the Condition,” feature page, when the “Add Condition,” feature tab is clicked on.
+Code the Navigator to automatically populate up to three sentences of common signs and symptoms, as documented in the 38 CFR and Department of Veteran Affairs requirements, and impact to daily life from the symptoms, inside the below text box when any of the following pre-populated boxes are clicked on.
+Select all symptoms that apply:
+Pain
+Discomfort
+Limited function
+Difficulty with daily activities
+Sleep disruption
+Anxiety
+Depression
+
+Code the Navigator use all current open AI, data, and all information that is memorialized in the Navigator already. 
+Code the navigator to add one pre-populated tab feature, into the “select all symptoms that apply,” feature box, with the box and the word “Other,” to the right of the box. Code to have the added box feature to mirror the already pre-populated tab features, to have all feature tabs to look in uniform.
+Recode the Navigator to allow all “add Conditions,” to be inputted, prior to moving onto the “evidence,” page and recode for the “evidence,” feature page, have one single upload for to be placed in the “Generate Evidence List.” Recode so that there is only one “evidence,” feature page and tab, so all uploads can be done at one time. Recode to remove the evidence feature for every added condition. There should only one time to upload all the documentation evidence which is uploaded for all added conditions. 
+Recode to have the “warrior coach,” feature box removed from the “evidence,” and “Review and submit” feature pages.
+Code the Navigator to enable the “download PDF,” feature tab in the “Review & Generate claim Package,” feature tab box. Enable tab so when the “download PDF,” tab is clicked, the document will be downloaded from the Navigator, and onto the users computer to be saved.
+Recode the green “submit Claim,” feature tab, to read the text “Save Finished Claim.”
+Recode the Navigator to remove the text “Evidence for:” feature tab, and have the text read, 
+“Evidence for Claims.”
+
