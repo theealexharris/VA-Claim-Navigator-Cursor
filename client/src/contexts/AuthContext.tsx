@@ -1,12 +1,14 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister } from "../lib/api";
+import { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from "react";
+import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister, removeAccessToken } from "../lib/api";
 import type { User } from "@shared/schema";
+
+const SESSION_DURATION_MS = 60 * 60 * 1000; // 60 minutes
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
+  register: (email: string, password: string, firstName?: string, lastName?: string) => Promise<{ user?: any; requireEmailVerification?: boolean } | void>;
   logout: () => Promise<void>;
 }
 
@@ -15,15 +17,65 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const sessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any existing session timer
+  const clearSessionTimer = useCallback(() => {
+    if (sessionTimerRef.current) {
+      clearTimeout(sessionTimerRef.current);
+      sessionTimerRef.current = null;
+    }
+  }, []);
+
+  // Start (or restart) the 60-minute session expiry timer
+  const startSessionTimer = useCallback(() => {
+    clearSessionTimer();
+    const loginTime = localStorage.getItem("loginTimestamp");
+    if (!loginTime) return;
+    const elapsed = Date.now() - parseInt(loginTime, 10);
+    const remaining = SESSION_DURATION_MS - elapsed;
+
+    if (remaining <= 0) {
+      // Already expired
+      handleSessionExpired();
+      return;
+    }
+
+    sessionTimerRef.current = setTimeout(() => {
+      handleSessionExpired();
+    }, remaining);
+  }, [clearSessionTimer]);
+
+  function handleSessionExpired() {
+    // Clear token and user state
+    removeAccessToken();
+    setUser(null);
+    // Clear user data
+    const keysToRemove = [
+      "userProfile", "serviceHistory", "medicalConditions",
+      "claimBuilderConditions", "claimBuilderEvidence", "generatedMemorandum",
+      "layStatements", "buddyStatements", "serviceConnectedPercentage",
+      "personalInfoComplete", "serviceHistoryComplete", "medicalConditionsComplete",
+      "previousClaimEnded", "showOnboarding", "selectedTier",
+      "pendingDeluxePayment", "paymentComplete", "loginTimestamp"
+    ];
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+
+    // Dispatch custom event so any page can listen for session expiry
+    window.dispatchEvent(new CustomEvent("sessionExpired"));
+  }
 
   useEffect(() => {
     checkAuth();
-  }, []);
+    return () => clearSessionTimer();
+  }, [clearSessionTimer]);
 
   async function checkAuth() {
     try {
       const currentUser = await getCurrentUser();
       setUser(currentUser);
+      // If user is already logged in, start/resume the session timer
+      startSessionTimer();
     } catch (error) {
       setUser(null);
     } finally {
@@ -32,16 +84,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function login(email: string, password: string) {
-    const user = await apiLogin(email, password);
-    setUser(user);
+    const result = await apiLogin(email, password);
+    // api.login returns the user object directly (or throws)
+    const loggedInUser = result && typeof result === "object" ? (result.user ?? result) : null;
+    if (loggedInUser && typeof loggedInUser === "object") {
+      setUser(loggedInUser);
+      // loginTimestamp is set in api.ts login(); start the 60-minute timer
+      startSessionTimer();
+    } else {
+      throw new Error("Invalid login response. Please try again.");
+    }
   }
 
   async function register(email: string, password: string, firstName?: string, lastName?: string) {
-    const user = await apiRegister(email, password, firstName, lastName);
-    setUser(user);
+    const result = await apiRegister(email, password, firstName, lastName);
+    // If verification is required, return the flag but do NOT set user
+    if (result?.requireEmailVerification) {
+      return { requireEmailVerification: true };
+    }
+    // Otherwise we got a real user back – set it in state
+    const userData = result && typeof result === "object" && result.id ? result : null;
+    if (userData) {
+      setUser(userData);
+      // loginTimestamp is set in api.ts register(); start the 60-minute timer
+      startSessionTimer();
+    }
+    return result;
   }
 
   async function logout() {
+    clearSessionTimer();
     await apiLogout();
     setUser(null);
     
@@ -63,7 +135,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       "showOnboarding",
       "selectedTier",
       "pendingDeluxePayment",
-      "paymentComplete"
+      "paymentComplete",
+      "loginTimestamp"
     ];
     keysToRemove.forEach(key => localStorage.removeItem(key));
   }

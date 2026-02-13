@@ -33,6 +33,7 @@ import {
 import { addNotification } from "@/components/NotificationDropdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
+import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import { useSubscription, PROMO_ACTIVE } from "@/hooks/use-subscription";
 import {
   Dialog,
@@ -67,9 +68,9 @@ interface Condition {
 }
 
 const steps = [
-  { id: 1, title: "Conditions", icon: Stethoscope },
-  { id: 2, title: "Symptoms & Severity", icon: AlertTriangle },
-  { id: 3, title: "Evidence", icon: FileText },
+  { id: 1, title: "Evidence", icon: FileText },
+  { id: 2, title: "Conditions", icon: Stethoscope },
+  { id: 3, title: "Symptoms & Severity", icon: AlertTriangle },
   { id: 4, title: "Review & Submit", icon: CheckCircle2 },
 ];
 
@@ -123,8 +124,22 @@ export default function ClaimBuilder() {
   const [hasShownVaguePopup, setHasShownVaguePopup] = useState(false);
   const [showPrintInstructionsPopup, setShowPrintInstructionsPopup] = useState(false);
   const [isProfileComplete, setIsProfileComplete] = useState(false);
+  const [isAnalyzingRecords, setIsAnalyzingRecords] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState("");
   const [showProfileRequiredDialog, setShowProfileRequiredDialog] = useState(false);
   const [showEvidenceWarningPopup, setShowEvidenceWarningPopup] = useState(false);
+  const [showConditionsFoundPopup, setShowConditionsFoundPopup] = useState(false);
+  const [newConditionsCount, setNewConditionsCount] = useState(0);
+  const [showEvidenceReviewPopup, setShowEvidenceReviewPopup] = useState(false);
+  const [conditionIdsViewed, setConditionIdsViewed] = useState<Set<string>>(new Set());
+  const [conditions, setConditions] = useState<Condition[]>([]);
+
+  // When on step 3 (Symptoms & Severity), mark the currently viewed condition as "clicked"
+  useEffect(() => {
+    if (currentStep === 3 && conditions[activeConditionIndex]?.id) {
+      setConditionIdsViewed((prev) => new Set(prev).add(conditions[activeConditionIndex].id));
+    }
+  }, [currentStep, activeConditionIndex, conditions]);
 
   // Route guard: Check workflow progress
   useEffect(() => {
@@ -189,11 +204,7 @@ export default function ClaimBuilder() {
   };
 
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-
-  const TIER_PRICE_IDS: Record<string, string> = {
-    pro: "price_1StA6uBWobRZKfqjxgQpF5W6",
-    deluxe: "price_1StACoBWobRZKfqjXUH6tIQN"
-  };
+  const { getPriceId } = useStripePriceIds();
 
   const handleSelectPlan = (tierName: string, price: string) => {
     // During promo, Pro tier is free - activate directly without payment
@@ -223,15 +234,17 @@ export default function ClaimBuilder() {
 
   const handleCheckout = async () => {
     const tierKey = selectedTier.name.toLowerCase();
-    const priceId = TIER_PRICE_IDS[tierKey];
-    if (!priceId) return;
+    const priceId = getPriceId(tierKey);
+    if (!priceId) {
+      toast({ title: "Payment not configured", description: "This plan is not available for checkout right now. Please try again later.", variant: "destructive" });
+      return;
+    }
 
     setIsProcessingPayment(true);
     try {
-      const response = await fetch("/api/stripe/checkout", {
+      const { authFetch } = await import("../lib/api-helpers");
+      const response = await authFetch("/api/stripe/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ priceId, tier: tierKey })
       });
 
@@ -241,13 +254,17 @@ export default function ClaimBuilder() {
       }
 
       const data = await response.json();
-      if (data.url) {
+      const checkoutUrl = typeof data?.url === "string" && data.url.startsWith("https://") ? data.url : null;
+      if (checkoutUrl) {
         setShowPaymentDialog(false);
-        window.open(data.url, '_blank', 'noopener,noreferrer');
+        window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
       } else {
-        console.error("No checkout URL returned");
+        const errorMessage = data?.message || "Unable to create checkout session. Please try again.";
+        toast({ title: "Payment Error", description: errorMessage, variant: "destructive" });
+        console.error("No checkout URL returned", data);
       }
     } catch (error) {
+      toast({ title: "Payment Error", description: "Failed to process payment. Please try again.", variant: "destructive" });
       console.error("Checkout error:", error);
     } finally {
       setIsProcessingPayment(false);
@@ -300,8 +317,6 @@ export default function ClaimBuilder() {
       setShowUpgradeDialog(false);
     }
   }, [showUpgradeDialog]);
-  
-  const [conditions, setConditions] = useState<Condition[]>([]);
 
   useEffect(() => {
     const saved = localStorage.getItem("claimBuilderConditions");
@@ -528,6 +543,13 @@ export default function ClaimBuilder() {
     toast({ title: "Evidence List Generated", description: "Upload your documents to strengthen your claim." });
   };
 
+  // Auto-generate evidence list when entering Step 1 (Evidence) so all three Upload buttons are immediately visible
+  useEffect(() => {
+    if (currentStep === 1 && allEvidence.length === 0) {
+      generateEvidenceList();
+    }
+  }, [currentStep]);
+
   const handleRealFileUpload = async (evidenceId: string) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -535,55 +557,96 @@ export default function ClaimBuilder() {
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        // Check file size - warn if over 50MB
-        if (file.size > 50 * 1024 * 1024) {
+        // Support up to 500MB for upload and analysis of large medical record volumes
+        const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+        if (file.size > MAX_UPLOAD_BYTES) {
           toast({ 
             title: "File Too Large", 
-            description: "Please upload files smaller than 50MB.", 
+            description: "Please upload files smaller than 500MB.", 
             variant: "destructive" 
           });
           return;
         }
 
         try {
-          toast({ title: "Uploading...", description: "Please wait while your file is uploaded." });
+          toast({ title: "Uploading...", description: `Uploading ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)}MB)...` });
           
-          // Step 1: Request presigned URL from backend
-          const urlResponse = await fetch("/api/uploads/request-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: file.name,
-              size: file.size,
-              contentType: file.type || "application/octet-stream",
-            }),
-          });
+          // Step 1: Request upload URL from backend
+          const { authFetch, getAccessToken } = await import("../lib/api-helpers");
+          let urlResponse: Response;
+          try {
+            urlResponse = await authFetch("/api/uploads/request-url", {
+              method: "POST",
+              body: JSON.stringify({
+                name: file.name,
+                size: file.size,
+                contentType: file.type || "application/octet-stream",
+              }),
+            });
+          } catch (netErr: any) {
+            console.error("Network error requesting upload URL:", netErr);
+            throw new Error("Cannot connect to server. Please check your connection and try again.");
+          }
 
           if (!urlResponse.ok) {
-            throw new Error("Failed to get upload URL");
+            const errData = await urlResponse.text();
+            console.error("Failed to get upload URL:", urlResponse.status, errData);
+            throw new Error(urlResponse.status === 401
+              ? "Session expired. Please sign in again."
+              : "Server could not prepare the upload. Please try again.");
           }
 
           const { uploadURL, objectPath } = await urlResponse.json();
 
-          // Step 2: Upload file directly to cloud storage
-          const uploadResponse = await fetch(uploadURL, {
-            method: "PUT",
-            body: file,
-            headers: { "Content-Type": file.type || "application/octet-stream" },
-          });
-
-          if (!uploadResponse.ok) {
-            throw new Error("Failed to upload file");
+          if (!uploadURL) {
+            throw new Error("Server did not return an upload URL");
           }
 
-          // Step 3: Update evidence with objectPath (not base64 data)
-          handleFileUpload(evidenceId, file.name, undefined, file.type, objectPath);
+          // Step 2: Upload file to server (streams to disk, no memory limit issues)
+          const token = getAccessToken();
+          const uploadHeaders: Record<string, string> = {
+            "Content-Type": file.type || "application/octet-stream",
+          };
+          if (token) {
+            uploadHeaders["Authorization"] = `Bearer ${token}`;
+          }
+
+          let uploadResponse: Response;
+          try {
+            uploadResponse = await fetch(uploadURL, {
+              method: "PUT",
+              body: file,
+              headers: uploadHeaders,
+            });
+          } catch (netErr: any) {
+            console.error("Network error during file upload:", netErr);
+            throw new Error("Upload interrupted. The file may be too large for your connection. Please try again.");
+          }
+
+          if (!uploadResponse.ok) {
+            const errText = await uploadResponse.text();
+            console.error("Upload failed:", uploadResponse.status, errText);
+            throw new Error(uploadResponse.status === 401
+              ? "Session expired. Please sign in again."
+              : uploadResponse.status === 413
+              ? "File is too large for the server. Please try a smaller file."
+              : `Upload failed (${uploadResponse.status}). Please try again.`);
+          }
+
+          const uploadData = await uploadResponse.json();
           
-        } catch (error) {
+          // Step 3: Update evidence record
+          handleFileUpload(evidenceId, file.name, undefined, file.type, objectPath);
+
+          // Step 4: Analyze every uploaded document to auto-populate conditions
+          const evidenceItem = allEvidence.find(e => e.id === evidenceId);
+          runMedicalRecordsAnalysis(file, evidenceItem?.type || "Medical Records", uploadData.serverFilePath);
+          
+        } catch (error: any) {
           console.error("Upload error:", error);
           toast({ 
             title: "Upload Failed", 
-            description: "Could not upload file. Please try again.", 
+            description: error?.message || "Could not upload file. Please try again.", 
             variant: "destructive" 
           });
         }
@@ -658,29 +721,135 @@ export default function ClaimBuilder() {
     toast({ title: "Document Uploaded", description: `${fileName} has been added.` });
   };
 
+  const runMedicalRecordsAnalysis = async (file: File, evidenceType: string, serverFilePath?: string) => {
+    setIsAnalyzingRecords(true);
+    setAnalysisProgress("Analyzing medical records for diagnoses...");
+    try {
+      const { authFetch } = await import("../lib/api-helpers");
+
+      // Send serverFilePath so the server reads the file from disk (no base64 needed)
+      const requestBody: Record<string, string> = {
+        fileType: file.type || "application/octet-stream",
+        fileName: file.name,
+      };
+      if (serverFilePath) {
+        requestBody.serverFilePath = serverFilePath;
+      } else {
+        // Fallback for small files: read as base64 (only if server path unavailable)
+        setAnalysisProgress("Reading document...");
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            const base64Data = result.includes(",") ? result.split(",")[1] : result;
+            resolve(base64Data || "");
+          };
+          reader.onerror = () => reject(new Error("Failed to read file"));
+          reader.readAsDataURL(file);
+        });
+        requestBody.fileData = base64;
+        setAnalysisProgress("Analyzing medical records for diagnoses...");
+      }
+
+      const res = await authFetch("/api/ai/analyze-medical-records", {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      const responseText = await res.text();
+      const isHtml = responseText.trimStart().toLowerCase().startsWith("<!doctype") || responseText.trimStart().toLowerCase().startsWith("<html");
+      if (isHtml) {
+        throw new Error("The backend server is not responding. Please restart the server and try again.");
+      }
+      if (!responseText.trim()) {
+        throw new Error("The server returned an empty response. Please try again.");
+      }
+      let data: { diagnoses?: unknown[]; rawAnalysis?: string };
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new Error("The server returned an invalid response. Please restart the server and try again.");
+      }
+      if (!res.ok) {
+        const message = (data as { message?: string })?.message || "Analysis failed. Please try again.";
+        throw new Error(message);
+      }
+      const { diagnoses } = data;
+      if (diagnoses && diagnoses.length > 0) {
+        ensureClaimStarted();
+        const newConditions: Condition[] = (diagnoses as { conditionName: string; onsetDate?: string; connectionType?: string; isPresumptive?: boolean }[]).map((d) => ({
+          id: `cond-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          name: (d.conditionName || "").toUpperCase().trim() || "Condition",
+          onsetDate: d.onsetDate || "",
+          frequency: "constant",
+          symptoms: [],
+          otherSymptom: "",
+          connectionType: d.connectionType === "secondary" ? "secondary" : "direct",
+          isPresumptive: Boolean(d.isPresumptive),
+          dailyImpact: "",
+        }));
+        setConditions(prev => {
+          const next = [...prev, ...newConditions];
+          saveConditions(next);
+          setActiveConditionIndex(next.length - 1);
+          return next;
+        });
+        toast({
+          title: "Conditions Extracted",
+          description: `Found ${newConditions.length} condition(s) from your medical records. Review and edit them in the Conditions step.`,
+        });
+        setNewConditionsCount(newConditions.length);
+        setShowConditionsFoundPopup(true);
+      } else {
+        // Check if the rawAnalysis explains why (e.g. scanned PDF, API error)
+        const rawMsg = data?.rawAnalysis || "";
+        const isApiError = rawMsg.toLowerCase().includes("credits") || rawMsg.toLowerCase().includes("api key") || rawMsg.toLowerCase().includes("unavailable");
+        toast({
+          title: isApiError ? "Analysis Service Busy" : "Analysis Complete",
+          description: isApiError
+            ? "The AI analysis service is temporarily busy. Please try again in a few minutes, or add conditions manually in the next step."
+            : "No VA-claimable diagnoses were found in this document. You can add conditions manually in the next step.",
+          variant: isApiError ? "destructive" : undefined,
+        });
+      }
+    } catch (err: any) {
+      console.error("Medical records analysis error:", err);
+      const msg = err?.message || "";
+      const isCredits = msg.toLowerCase().includes("credits") || msg.toLowerCase().includes("api key") || msg.toLowerCase().includes("forbidden");
+      toast({
+        title: isCredits ? "AI Service Temporarily Unavailable" : "Analysis Unavailable",
+        description: isCredits
+          ? "The AI analysis service has run out of credits. Please try again in a few minutes. You can add conditions manually in the Conditions step."
+          : (msg || "Could not analyze document. Add conditions manually in the Conditions step."),
+        variant: "destructive",
+      });
+    } finally {
+      setIsAnalyzingRecords(false);
+      setAnalysisProgress("");
+    }
+  };
+
   const nextStep = async () => {
-    // Check if medical condition is empty on step 1
-    if (currentStep === 1 && (!activeCondition?.name || activeCondition.name.trim() === "")) {
-      setShowMissingConditionPopup(true);
+    // Step 1 (Evidence): show review popup; user must click OK to proceed
+    if (currentStep === 1) {
+      setShowEvidenceReviewPopup(true);
       return;
     }
-    
+    // Step 2 (Conditions): require at least one condition with a name
     if (currentStep === 2) {
+      if (!activeCondition?.name || activeCondition.name.trim() === "") {
+        setShowMissingConditionPopup(true);
+        return;
+      }
+      setCurrentStep((prev) => Math.min(prev + 1, steps.length));
+      return;
+    }
+    // Step 3 (Severity): show symptoms popup; on confirm, advance to step 4
+    if (currentStep === 3) {
       setShowSymptomsPopup(true);
-    } else if (currentStep === 3) {
-      // Check if any evidence is uploaded
-      const hasUploadedEvidence = allEvidence.some(e => e.status === "uploaded");
-      if (!hasUploadedEvidence) {
-        setShowEvidenceWarningPopup(true);
-        return;
-      }
-      // When moving from Evidence to Review, trigger AI processing
-      if (!isPaidTier && !PROMO_ACTIVE) {
-        safeShowUpgradeDialog();
-        return;
-      }
-      await processClaimData();
-    } else {
+      return;
+    }
+    // Step 4: Continue button not used (user is on Review)
+    if (currentStep === 4) {
       setCurrentStep((prev) => Math.min(prev + 1, steps.length));
     }
   };
@@ -755,10 +924,9 @@ export default function ClaimBuilder() {
 
       const categorizedEvidence = categorizeEvidence(allEvidence);
 
-      const response = await fetch("/api/ai/generate-claim-memorandum", {
+      const { authFetch } = await import("../lib/api-helpers");
+      const response = await authFetch("/api/ai/generate-claim-memorandum", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           veteranName: fullName,
           ssn: ssnFormatted,
@@ -827,12 +995,30 @@ export default function ClaimBuilder() {
   
   const confirmNextStep = () => {
     setShowSymptomsPopup(false);
+    // When advancing from Step 3 (Severity) to Step 4, check for uploaded evidence
+    if (currentStep === 3) {
+      const hasUploadedEvidence = allEvidence.some(e => e.status === "uploaded");
+      if (!hasUploadedEvidence) {
+        setShowEvidenceWarningPopup(true);
+        return;
+      }
+      setCurrentStep(4);
+      return;
+    }
     setCurrentStep((prev) => Math.min(prev + 1, steps.length));
   };
   const prevStep = () => setCurrentStep((prev) => Math.max(prev - 1, 1));
 
   const activeCondition = conditions[activeConditionIndex];
   const conditionTip = aiTips[activeCondition?.name] || aiTips["default"];
+
+  const allConditionsClicked = conditions.length === 0 || conditions.every((c) => conditionIdsViewed.has(c.id));
+  const allConditionsHaveSymptomsFilled =
+    conditions.length === 0 ||
+    conditions.every(
+      (c) => ((c.symptoms?.length ?? 0) > 0 || (c.dailyImpact?.trim() ?? "") !== "")
+    );
+  const canContinueFromStep3 = allConditionsClicked && allConditionsHaveSymptomsFilled;
 
   const handlePrint = () => {
     if (!isPaidTier && !PROMO_ACTIVE) {
@@ -881,7 +1067,7 @@ export default function ClaimBuilder() {
     });
   };
 
-  const showWarriorCoach = currentStep === 1 || currentStep === 2;
+  const showWarriorCoach = currentStep === 2 || currentStep === 3;
 
   return (
     <DashboardLayout>
@@ -932,7 +1118,10 @@ export default function ClaimBuilder() {
             <div key={condition.id} className="flex items-center">
               <Button
                 variant={activeConditionIndex === index ? "default" : "outline"}
-                onClick={() => setActiveConditionIndex(index)}
+                onClick={() => {
+                  setActiveConditionIndex(index);
+                  setConditionIdsViewed((prev) => new Set(prev).add(condition.id));
+                }}
                 className="rounded-r-none text-base"
                 data-testid={`button-condition-tab-${index}`}
               >
@@ -996,13 +1185,110 @@ export default function ClaimBuilder() {
               >
                 <Card className="shadow-lg border-primary/5 min-h-[450px] print:shadow-none print:border-0 print:min-h-0">
                   <CardContent className="p-8">
+                    {/* Step 1: Evidence - Upload documents first */}
                     {currentStep === 1 && (
+                      <div className="space-y-6">
+                        <div className="flex justify-between items-center">
+                          <h2 className="text-xl font-bold text-primary font-serif">Evidence for Claims</h2>
+                          {allEvidence.length === 0 && (
+                            <Button onClick={generateEvidenceList} className="bg-secondary text-secondary-foreground">
+                              <FileText className="mr-2 h-4 w-4" /> Generate Evidence List
+                            </Button>
+                          )}
+                        </div>
+
+                        {conditions.length > 0 && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                            <p className="text-sm text-blue-800">
+                              <span className="font-bold">Claiming {conditions.length} condition{conditions.length > 1 ? 's' : ''}:</span>{' '}
+                              {conditions.map(c => c.name || 'Unnamed').join(', ')}
+                            </p>
+                          </div>
+                        )}
+                        {conditions.length === 0 && (
+                          <p className="text-sm text-muted-foreground">Upload Military Medical Records to automatically extract conditions from your records. You can also add conditions manually in the next step.</p>
+                        )}
+
+                        {allEvidence.length === 0 ? (
+                          <div className="text-center py-12 border-2 border-dashed rounded-lg">
+                            <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                            <p className="text-lg text-muted-foreground">Click "Generate Evidence List" to see what documents to upload.</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {allEvidence.map((evidence) => (
+                              <div key={evidence.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <h4 className="font-bold text-primary text-base">{evidence.type}</h4>
+                                      {evidence.status === "uploaded" && (
+                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Uploaded</span>
+                                      )}
+                                    </div>
+                                    <p className="text-base text-muted-foreground mt-1">{evidence.description}</p>
+                                    {evidence.fileName && (
+                                      <p className="text-sm text-primary mt-2 flex items-center gap-1">
+                                        <FileText className="h-3 w-3" /> {evidence.fileName}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col gap-2 items-end">
+                                    <div className="flex gap-2">
+                                      {evidence.status === "uploaded" && (
+                                        <>
+                                          <Button variant="outline" size="sm" onClick={() => handleViewEvidence(evidence)}>
+                                            <Eye className="h-3 w-3 mr-1" /> View
+                                          </Button>
+                                          <Button variant="outline" size="sm" onClick={() => { setEditingEvidence(evidence); setShowEvidenceDialog(true); }}>
+                                            <Pencil className="h-3 w-3 mr-1" /> Edit
+                                          </Button>
+                                          <Button 
+                                            variant="outline" 
+                                            size="sm" 
+                                            className="text-destructive hover:text-destructive"
+                                            onClick={() => deleteEvidence(evidence.id)}
+                                          >
+                                            <Trash2 className="h-3 w-3 mr-1" /> Delete
+                                          </Button>
+                                        </>
+                                      )}
+                                      <Button 
+                                        size="sm"
+                                        variant={evidence.status === "uploaded" ? "outline" : "default"}
+                                        onClick={() => handleRealFileUpload(evidence.id)}
+                                      >
+                                        <Upload className="h-3 w-3 mr-1" /> {evidence.status === "uploaded" ? "Re-upload" : "Upload"}
+                                      </Button>
+                                    </div>
+                                    {evidence.status === "uploaded" && (
+                                      <Button
+                                        variant={evidence.printEnabled ? "default" : "outline"}
+                                        size="sm"
+                                        onClick={() => togglePrintEnabled(evidence.id)}
+                                        className={evidence.printEnabled ? "bg-primary" : ""}
+                                      >
+                                        <Printer className="h-3 w-3 mr-1" />
+                                        {evidence.printEnabled ? "Print Enabled" : "Enable Print"}
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Step 2: Conditions - Add or edit conditions (auto-populated from evidence if available) */}
+                    {currentStep === 2 && (
                       <div className="space-y-6">
                         <h2 className="text-xl font-bold text-primary font-serif">Add your Disability/Injury To Be Claimed Below</h2>
                         {conditions.length === 0 ? (
                           <div className="text-center py-12 border-2 border-dashed rounded-lg">
                             <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                            <p className="text-lg text-muted-foreground mb-4">No conditions added yet. Click below to start a new claim.</p>
+                            <p className="text-lg text-muted-foreground mb-4">No conditions added yet. Add conditions below or upload Military Medical Records in the Evidence step to auto-extract them.</p>
                             <Button
                               onClick={startNewClaim}
                               className="bg-primary hover:bg-primary/90 text-white font-bold px-6 py-3"
@@ -1085,7 +1371,8 @@ export default function ClaimBuilder() {
                       </div>
                     )}
 
-                    {currentStep === 2 && (
+                    {/* Step 3: Symptoms & Severity */}
+                    {currentStep === 3 && (
                       <div className="space-y-6">
                         <h2 className="text-xl font-bold text-primary font-serif">Symptoms & Severity: {activeCondition?.name || "Condition"}</h2>
                         
@@ -1149,96 +1436,6 @@ export default function ClaimBuilder() {
                           />
                           <p className="text-sm text-muted-foreground">Symptom descriptions from 38 CFR are automatically added when you select symptoms above.</p>
                         </div>
-                      </div>
-                    )}
-
-                    {currentStep === 3 && (
-                      <div className="space-y-6">
-                        <div className="flex justify-between items-center">
-                          <h2 className="text-xl font-bold text-primary font-serif">Evidence for Claims</h2>
-                          {allEvidence.length === 0 && (
-                            <Button onClick={generateEvidenceList} className="bg-secondary text-secondary-foreground">
-                              <FileText className="mr-2 h-4 w-4" /> Generate Evidence List
-                            </Button>
-                          )}
-                        </div>
-
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                          <p className="text-sm text-blue-800">
-                            <span className="font-bold">Claiming {conditions.length} condition{conditions.length > 1 ? 's' : ''}:</span>{' '}
-                            {conditions.map(c => c.name || 'Unnamed').join(', ')}
-                          </p>
-                        </div>
-
-                        {allEvidence.length === 0 ? (
-                          <div className="text-center py-12 border-2 border-dashed rounded-lg">
-                            <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                            <p className="text-lg text-muted-foreground">Click "Generate Evidence List" to see what documents will strengthen your claim.</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-4">
-                            {allEvidence.map((evidence) => (
-                              <div key={evidence.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                                <div className="flex items-start justify-between">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <h4 className="font-bold text-primary text-base">{evidence.type}</h4>
-                                      {evidence.status === "uploaded" && (
-                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Uploaded</span>
-                                      )}
-                                    </div>
-                                    <p className="text-base text-muted-foreground mt-1">{evidence.description}</p>
-                                    {evidence.fileName && (
-                                      <p className="text-sm text-primary mt-2 flex items-center gap-1">
-                                        <FileText className="h-3 w-3" /> {evidence.fileName}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <div className="flex flex-col gap-2 items-end">
-                                    <div className="flex gap-2">
-                                      {evidence.status === "uploaded" ? (
-                                        <>
-                                          <Button variant="outline" size="sm" onClick={() => handleViewEvidence(evidence)}>
-                                            <Eye className="h-3 w-3 mr-1" /> View
-                                          </Button>
-                                          <Button variant="outline" size="sm" onClick={() => { setEditingEvidence(evidence); setShowEvidenceDialog(true); }}>
-                                            <Pencil className="h-3 w-3 mr-1" /> Edit
-                                          </Button>
-                                          <Button 
-                                            variant="outline" 
-                                            size="sm" 
-                                            className="text-destructive hover:text-destructive"
-                                            onClick={() => deleteEvidence(evidence.id)}
-                                          >
-                                            <Trash2 className="h-3 w-3 mr-1" /> Delete
-                                          </Button>
-                                        </>
-                                      ) : (
-                                        <Button 
-                                          size="sm"
-                                          onClick={() => handleRealFileUpload(evidence.id)}
-                                        >
-                                          <Upload className="h-3 w-3 mr-1" /> Upload
-                                        </Button>
-                                      )}
-                                    </div>
-                                    {evidence.status === "uploaded" && (
-                                      <Button
-                                        variant={evidence.printEnabled ? "default" : "outline"}
-                                        size="sm"
-                                        onClick={() => togglePrintEnabled(evidence.id)}
-                                        className={evidence.printEnabled ? "bg-primary" : ""}
-                                      >
-                                        <Printer className="h-3 w-3 mr-1" />
-                                        {evidence.printEnabled ? "Print Enabled" : "Enable Print"}
-                                      </Button>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     )}
                     
@@ -1518,6 +1715,16 @@ export default function ClaimBuilder() {
                                         </div>
                                       )}
                                       
+                                      <div className="mt-3 space-y-2">
+                                        <p className="font-bold">Legal Framework</p>
+                                        <p className="text-sm pl-4" style={{ textAlign: 'justify' }}>
+                                          Service connection and compensation for disability are governed by 38 U.S.C. §§ 1110 and 1131 and implementing regulations at 38 CFR Part 3 and Part 4. Under 38 CFR § 3.303(a), service connection may be established by evidence of continuity of symptomatology or by medical nexus. Under 38 CFR § 4.1 and § 4.10, disability ratings are based on the average impairment of earning capacity and the functional effects of the disability. The VA must consider all evidence of record and resolve reasonable doubt in the veteran’s favor under 38 U.S.C. § 5107(b).
+                                        </p>
+                                        <p className="text-sm pl-4" style={{ textAlign: 'justify' }}>
+                                          In <em>Buchanan v. Nicholson</em>, 451 F.3d 1334 (Fed. Cir. 2006), the Federal Circuit held that when the evidence is in relative equipoise, the benefit of the doubt must go to the veteran and the claim must be granted. The court reaffirmed that the “at least as likely as not” standard in 38 C.F.R. § 3.102 requires the VA to grant the claim when the evidence for and against service connection is evenly balanced. This standard applies to the evaluation of the conditions set forth in this supporting statement.
+                                        </p>
+                                      </div>
+                                      
                                       <p className="text-sm text-muted-foreground mt-2">
                                         Per 38 CFR § 3.303, § 4.40, § 4.45, and § 4.59, the functional limitations caused by this condition warrant service connection and appropriate rating consideration.
                                       </p>
@@ -1656,7 +1863,7 @@ export default function ClaimBuilder() {
                       <ChevronLeft className="mr-2 h-4 w-4" /> Back
                     </Button>
                     
-                    {currentStep !== 3 && currentStep !== 4 && (
+                    {currentStep === 2 && (
                       <Button 
                         onClick={addCondition} 
                         variant="outline"
@@ -1668,7 +1875,11 @@ export default function ClaimBuilder() {
                     )}
                     
                     {currentStep < 4 ? (
-                      <Button onClick={nextStep} className="bg-primary hover:bg-primary/90">
+                      <Button
+                        onClick={nextStep}
+                        className="bg-primary hover:bg-primary/90"
+                        disabled={currentStep === 3 && !canContinueFromStep3}
+                      >
                         Continue <ChevronRight className="ml-2 h-4 w-4" />
                       </Button>
                     ) : (
@@ -1911,6 +2122,31 @@ export default function ClaimBuilder() {
         </DialogContent>
       </Dialog>
 
+      {/* Evidence step: review/verify popup - must click OK to enable Continue to next step */}
+      <Dialog open={showEvidenceReviewPopup} onOpenChange={setShowEvidenceReviewPopup}>
+        <DialogContent className="border-2 border-red-500 sm:max-w-md" data-testid="dialog-evidence-review-popup">
+          <DialogHeader>
+            <DialogTitle className="text-xl text-red-600 flex items-center gap-2">
+              <AlertTriangle className="h-6 w-6" /> Review Required
+            </DialogTitle>
+            <DialogDescription className="text-base pt-2 text-left">
+              Every above listed condition needs to be reviewed/verified.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end pt-4">
+            <Button
+              onClick={() => {
+                setShowEvidenceReviewPopup(false);
+                setCurrentStep(2);
+              }}
+              data-testid="button-evidence-review-ok"
+            >
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Symptoms Continue Popup */}
       <Dialog open={showSymptomsPopup} onOpenChange={setShowSymptomsPopup}>
         <DialogContent className="border-2 border-red-500" data-testid="dialog-symptoms-popup">
@@ -1919,7 +2155,7 @@ export default function ClaimBuilder() {
               <AlertTriangle className="h-6 w-6" /> Add More Claims?
             </DialogTitle>
             <DialogDescription className="text-base pt-2" data-testid="text-symptoms-popup-message">
-              Click the "Add Condition" tab to add more claims or click on continue to move forward.
+              Click the &quot;Add Condition&quot; tab to add more claims or click on continue to move forward. All claims must be clicked on and &quot;Symptoms &amp; Severity&quot; must be inputted.
             </DialogDescription>
           </DialogHeader>
           <div className="flex gap-3 pt-4">
@@ -2082,6 +2318,24 @@ export default function ClaimBuilder() {
         </DialogContent>
       </Dialog>
 
+      {/* Analyzing Medical Records Dialog */}
+      <Dialog open={isAnalyzingRecords} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl text-primary flex items-center gap-2">
+              <FileText className="h-6 w-6 animate-pulse" /> Analyzing Medical Records
+            </DialogTitle>
+            <DialogDescription className="text-base pt-2">
+              Searching for diagnoses and mapping them to 38 CFR Part 4 diagnostic codes...
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-6 flex flex-col items-center gap-4">
+            <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground text-center">{analysisProgress || "Please wait."}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Cancel Claim Confirmation Dialog */}
       <Dialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
         <DialogContent className="border-4 border-red-500 sm:max-w-md" data-testid="dialog-cancel-claim">
@@ -2152,6 +2406,27 @@ export default function ClaimBuilder() {
           </div>
           <div className="flex justify-center pt-4">
             <Button onClick={() => setShowVagueConditionPopup(false)} data-testid="button-vague-condition-ok">
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conditions Found Alert Popup */}
+      <Dialog open={showConditionsFoundPopup} onOpenChange={setShowConditionsFoundPopup}>
+        <DialogContent className="max-w-lg border-4 border-red-500" data-testid="dialog-conditions-found">
+          <DialogHeader>
+            <DialogTitle className="text-xl text-red-600 flex items-center gap-2">
+              <AlertCircle className="h-6 w-6" /> Conditions Found
+            </DialogTitle>
+          </DialogHeader>
+          <div className="pt-2">
+            <p className="text-base font-bold text-red-600" data-testid="text-conditions-found-message">
+              {newConditionsCount} medical condition(s) have been extracted from your records and added to your claim. Click on each condition tab at the top of the page to review, edit, and account for every claim.
+            </p>
+          </div>
+          <div className="flex justify-center pt-4">
+            <Button onClick={() => setShowConditionsFoundPopup(false)} data-testid="button-conditions-found-ok">
               OK
             </Button>
           </div>

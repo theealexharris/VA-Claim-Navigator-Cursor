@@ -1,4 +1,3 @@
-import { storage } from './storage';
 import { getUncachableStripeClient } from './stripeClient';
 
 export class StripeService {
@@ -68,9 +67,16 @@ export class StripeService {
     }
   }
 
-  async createCheckoutSession(customerId: string, priceId: string, successUrl: string, cancelUrl: string, promotionCode?: string) {
+  async createCheckoutSession(
+    customerId: string,
+    priceId: string,
+    successUrl: string,
+    cancelUrl: string,
+    promotionCode?: string,
+    metadata?: { userId: string; tier: string }
+  ) {
     const stripe = await getUncachableStripeClient();
-    
+
     const sessionConfig: any = {
       customer: customerId,
       payment_method_types: ['card'],
@@ -79,15 +85,17 @@ export class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
     };
-    
-    // If a specific promotion code is provided, apply it directly
-    // Otherwise, allow users to enter any valid promotion code
+
+    if (metadata?.userId && metadata?.tier) {
+      sessionConfig.metadata = { userId: metadata.userId, tier: metadata.tier };
+    }
+
     if (promotionCode) {
       sessionConfig.discounts = [{ promotion_code: promotionCode }];
     } else {
       sessionConfig.allow_promotion_codes = true;
     }
-    
+
     return await stripe.checkout.sessions.create(sessionConfig);
   }
 

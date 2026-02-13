@@ -28,10 +28,9 @@ export function useAIResearch(feature: FeatureType) {
 
   const mutation = useMutation({
     mutationFn: async ({ query, context }: { query: string; context?: string }) => {
-      const res = await fetch("/api/ai/research", {
+      const { authFetch } = await import("../lib/api-helpers");
+      const res = await authFetch("/api/ai/research", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ feature, query, context }),
       });
       if (!res.ok) {
@@ -69,9 +68,9 @@ export function useAIResearch(feature: FeatureType) {
 export function useConditionGuidance() {
   return useMutation({
     mutationFn: async (conditionName: string) => {
-      const res = await fetch("/api/ai/condition-guidance", {
+      const { authFetch } = await import("../lib/api-helpers");
+      const res = await authFetch("/api/ai/condition-guidance", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ conditionName }),
       });
@@ -91,10 +90,9 @@ export function useLayStatementGenerator() {
       dailyImpact: string;
       serviceConnection: string;
     }) => {
-      const res = await fetch("/api/ai/generate-lay-statement", {
+      const { authFetch } = await import("../lib/api-helpers");
+      const res = await authFetch("/api/ai/generate-lay-statement", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(data),
       });
       if (!res.ok) {
@@ -112,10 +110,9 @@ export function useBuddyStatementGenerator() {
       relationship: string;
       observedSymptoms: string;
     }) => {
-      const res = await fetch("/api/ai/generate-buddy-statement", {
+      const { authFetch } = await import("../lib/api-helpers");
+      const res = await authFetch("/api/ai/generate-buddy-statement", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(data),
       });
       if (!res.ok) {

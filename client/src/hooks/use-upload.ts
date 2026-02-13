@@ -62,11 +62,9 @@ export function useUpload(options: UseUploadOptions = {}) {
    */
   const requestUploadUrl = useCallback(
     async (file: File): Promise<UploadResponse> => {
-      const response = await fetch("/api/uploads/request-url", {
+      const { authFetch } = await import("../lib/api-helpers");
+      const response = await authFetch("/api/uploads/request-url", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           name: file.name,
           size: file.size,

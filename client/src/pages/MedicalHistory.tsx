@@ -300,7 +300,7 @@ export default function MedicalHistory() {
       <div className="max-w-4xl mx-auto space-y-8">
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-serif font-bold text-primary">Medical History & Conditions</h1>
+            <h1 className="text-3xl font-serif font-bold text-primary">Service Connected Medical History & Conditions</h1>
             <p className="text-lg text-muted-foreground">Track your diagnosed conditions and medical providers.</p>
           </div>
           <Button onClick={handleAddConditionClick} data-testid="button-add-condition">

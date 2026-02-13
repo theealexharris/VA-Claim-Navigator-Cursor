@@ -27,8 +27,15 @@ export default function Dashboard() {
   const [showTermsPopup, setShowTermsPopup] = useState(false);
 
   useEffect(() => {
-    // Check for successful payment return from Stripe
+    // If user has pending Deluxe payment, send them to Profile to complete then pay $499
+    const pendingDeluxe = localStorage.getItem("pendingDeluxePayment");
     const urlParams = new URLSearchParams(window.location.search);
+    if (pendingDeluxe === "true" && urlParams.get("payment") !== "success") {
+      setLocation("/dashboard/profile");
+      return;
+    }
+
+    // Check for successful payment return from Stripe
     if (urlParams.get("payment") === "success") {
       const tier = urlParams.get("tier") || "pro";
       

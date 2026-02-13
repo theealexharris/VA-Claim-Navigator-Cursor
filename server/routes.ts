@@ -1,756 +1,1001 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
-import { pool } from "./db";
-import passport from "passport";
-import { Strategy as LocalStrategy } from "passport-local";
-import bcrypt from "bcryptjs";
+import { InsforgeStorageService } from "./insforge-storage-service";
+import { 
+  registerUser, 
+  signInUser, 
+  signOutUser,
+  requireInsforgeAuth,
+  getInsforgeSession 
+} from "./insforge-auth";
+import { insforgeStorage } from "./insforge-storage";
 import { z } from "zod";
 import { insertUserSchema, insertServiceHistorySchema, insertMedicalConditionSchema, insertClaimSchema, insertLayStatementSchema, insertBuddyStatementSchema, insertAppealSchema, insertReferralSchema, insertConsultationSchema, type User } from "@shared/schema";
-import { getFeatureResearch, getConditionGuidance, generateLayStatementDraft, generateBuddyStatementTemplate, generateClaimMemorandum, type FeatureType, type ClaimMemorandumData } from "./ai-service";
-import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
-
-declare module "express-session" {
-  interface SessionData {
-    passport?: { user?: string };
-  }
-}
-
-// Middleware to require authentication
-function requireAuth(req: any, res: any, next: any) {
-  if (req.isAuthenticated()) {
-    return next();
-  }
-  res.status(401).json({ message: "Unauthorized" });
-}
+import { getFeatureResearch, getConditionGuidance, generateLayStatementDraft, generateBuddyStatementTemplate, generateClaimMemorandum, analyzeMedicalRecords, type FeatureType, type ClaimMemorandumData } from "./ai-service";
+import { randomUUID } from "crypto";
+import fs from "fs";
+import path from "path";
+import { TEMP_UPLOAD_DIR } from "./constants";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Create PostgreSQL session store for persistent sessions
-  const PgSession = connectPgSimple(session);
+  // Create Insforge storage service instance
+  const storage = new InsforgeStorageService();
 
-  // Session configuration with PostgreSQL store
-  app.use(
-    session({
-      store: new PgSession({
-        pool: pool as any,
-        tableName: "user_sessions",
-        createTableIfMissing: true,
-      }),
-      secret: process.env.SESSION_SECRET!,
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure: process.env.NODE_ENV === "production",
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-      },
-    })
-  );
+  // Map DB user (snake_case) to API/frontend shape (camelCase)
+  function dbUserToApiUser(dbUser: any): any {
+    if (!dbUser) return dbUser;
+    return {
+      id: dbUser.id,
+      email: dbUser.email,
+      firstName: dbUser.first_name,
+      lastName: dbUser.last_name,
+      phone: dbUser.phone,
+      address: dbUser.address,
+      city: dbUser.city,
+      state: dbUser.state,
+      zipCode: dbUser.zip_code,
+      avatarUrl: dbUser.avatar_url,
+      vaId: dbUser.va_id,
+      subscriptionTier: dbUser.subscription_tier,
+      role: dbUser.role,
+      twoFactorEnabled: dbUser.two_factor_enabled,
+      profileCompleted: dbUser.profile_completed,
+      stripeCustomerId: dbUser.stripe_customer_id,
+      stripeSubscriptionId: dbUser.stripe_subscription_id,
+      createdAt: dbUser.created_at,
+    };
+  }
 
-  app.use(passport.initialize());
-  app.use(passport.session());
-
-  // Passport configuration
-  passport.use(
-    new LocalStrategy(
-      { usernameField: "email" },
-      async (email, password, done) => {
-        try {
-          const user = await storage.getUserByEmail(email);
-          if (!user) {
-            return done(null, false, { message: "Invalid email or password" });
-          }
-
-          const isValid = await bcrypt.compare(password, user.password);
-          if (!isValid) {
-            return done(null, false, { message: "Invalid email or password" });
-          }
-
-          return done(null, user);
-        } catch (error) {
-          return done(error);
-        }
-      }
-    )
-  );
-
-  passport.serializeUser((user: any, done) => {
-    done(null, user.id);
-  });
-
-  passport.deserializeUser(async (id: string, done) => {
-    try {
-      const user = await storage.getUser(id);
-      done(null, user);
-    } catch (error) {
-      done(error);
+  // Map API/frontend updates (camelCase) to DB columns (snake_case)
+  function apiUpdatesToDbUpdates(updates: Record<string, any>): Record<string, any> {
+    const map: Record<string, string> = {
+      firstName: "first_name", lastName: "last_name", zipCode: "zip_code",
+      avatarUrl: "avatar_url", vaId: "va_id", subscriptionTier: "subscription_tier",
+      twoFactorEnabled: "two_factor_enabled", profileCompleted: "profile_completed",
+      stripeCustomerId: "stripe_customer_id", stripeSubscriptionId: "stripe_subscription_id",
+      createdAt: "created_at",
+    };
+    const db: Record<string, any> = {};
+    for (const [k, v] of Object.entries(updates)) {
+      if (v === undefined) continue;
+      db[map[k] ?? k] = v;
     }
-  });
+    return db;
+  }
 
   // Auth routes
-  app.post("/api/auth/register", async (req, res, next) => {
+  app.post("/api/auth/register", async (req, res) => {
     try {
+      // Validate required fields
+      if (!req.body || typeof req.body !== 'object') {
+        return res.status(400).json({ message: "Invalid request body" });
+      }
+
       const { email, password, firstName, lastName } = insertUserSchema.parse(req.body);
       
-      const existingUser = await storage.getUserByEmail(email);
-      if (existingUser) {
-        return res.status(400).json({ message: "Email already registered" });
+      // Validate email and password exist
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+      
+      const fullName = `${firstName || ''} ${lastName || ''}`.trim() || undefined;
+      
+      console.log(`[REGISTER] Attempting registration for: ${email}`);
+      
+      const result = await registerUser(email, password, fullName);
+      
+      console.log(`[REGISTER] Insforge response received`);
+      
+      // Handle null/undefined result
+      if (!result) {
+        console.error('[REGISTER] Insforge returned null/undefined result');
+        return res.status(500).json({ message: "Registration service unavailable. Please try again." });
+      }
+      
+      // Handle email verification required
+      if (result.requireEmailVerification) {
+        console.log(`[REGISTER] Email verification required for: ${email}`);
+        return res.json({ 
+          message: "Please check your email to verify your account",
+          requireEmailVerification: true 
+        });
+      }
+      
+      // Validate that we got user data back
+      if (!result.user) {
+        console.error('[REGISTER] No user in Insforge response');
+        return res.status(500).json({ message: "Registration incomplete. Please try again." });
       }
 
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({
-        email,
-        password: hashedPassword,
-        firstName,
-        lastName,
+      // Save user to navigator database so profile exists for dashboard and future requests
+      let dbUser: any = null;
+      if (result.accessToken) {
+        try {
+          const authUser = result.user as any;
+          const userRow = {
+            id: authUser.id,
+            email: authUser.email || email,
+            password: "", // Auth is handled by Insforge; placeholder for DB NOT NULL
+            first_name: firstName ?? authUser.firstName ?? (authUser.profile?.name || "").split(" ")[0] ?? "",
+            last_name: lastName ?? authUser.lastName ?? (authUser.profile?.name || "").split(" ").slice(1).join(" ") ?? "",
+          };
+          dbUser = await storage.createUser(userRow, result.accessToken);
+          console.log(`[REGISTER] User saved to navigator: ${authUser.id}`);
+        } catch (createErr: any) {
+          // User row may already exist (e.g. from a previous flow)
+          if (createErr?.message?.includes("duplicate") || createErr?.message?.includes("unique") || createErr?.code === "23505") {
+            dbUser = await storage.getUser(result.user.id, result.accessToken);
+          } else {
+            console.error("[REGISTER] Failed to save user to navigator:", createErr?.message);
+          }
+        }
+      }
+      
+      // Increment stats (if we have an access token)
+      if (result.accessToken) {
+        try {
+          await storage.incrementStat("vets_served", result.accessToken);
+        } catch (statError) {
+          console.error('[REGISTER] Failed to increment stats:', statError);
+          // Don't fail registration for stats error
+        }
+      }
+      
+      console.log(`[REGISTER] Success for: ${email}`);
+      
+      // Return stored profile so dashboard can be populated from navigator data
+      const apiUser = dbUser ? dbUserToApiUser(dbUser) : { id: result.user.id, email: result.user.email, firstName: firstName ?? "", lastName: lastName ?? "" };
+      res.json({ 
+        user: apiUser,
+        accessToken: result.accessToken 
       });
-
-      // Increment the vets served counter when a new user registers
-      await storage.incrementStat("vets_served");
-
-      req.login(user, (err) => {
-        if (err) return next(err);
-        const { password: _, ...userWithoutPassword } = user;
-        res.json(userWithoutPassword);
-      });
-    } catch (error) {
+    } catch (error: any) {
+      console.error('[REGISTER] Error:', error.message, error.stack);
+      
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+        return res.status(400).json({ 
+          message: "Invalid input: " + error.errors.map(e => e.message).join(', '),
+          errors: error.errors 
+        });
       }
-      next(error);
+      
+      // Handle specific Insforge errors
+      const errorMessage = error.message || "Registration failed";
+      
+      // Check for common errors
+      if (errorMessage.toLowerCase().includes('already') || errorMessage.toLowerCase().includes('exists')) {
+        return res.status(409).json({ message: "An account with this email already exists" });
+      }
+      
+      if (errorMessage.toLowerCase().includes('password')) {
+        return res.status(400).json({ message: errorMessage });
+      }
+      
+      res.status(400).json({ message: errorMessage });
     }
   });
 
-  app.post("/api/auth/login", (req, res, next) => {
-    passport.authenticate("local", (err: any, user: User | false, info: any) => {
-      if (err) return next(err);
-      if (!user) {
-        return res.status(401).json({ message: info?.message || "Invalid credentials" });
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+      
+      console.log(`[LOGIN] Attempting login for: ${email}`);
+      
+      const result = await signInUser(email, password);
+      
+      if (!result?.user) {
+        console.error('[LOGIN] No user in Insforge response');
+        return res.status(401).json({ message: "Invalid credentials" });
       }
 
-      req.login(user, (loginErr) => {
-        if (loginErr) return next(loginErr);
-        const { password: _, ...userWithoutPassword } = user;
-        res.json(userWithoutPassword);
-      });
-    })(req, res, next);
+      // Ensure user exists in navigator DB; never fail login if DB ops fail (auth already succeeded)
+      let dbUser: any = null;
+      try {
+        dbUser = result.accessToken
+          ? await storage.getUser(result.user.id, result.accessToken)
+          : null;
+        if (!dbUser && result.accessToken) {
+          try {
+            const authUser = result.user as any;
+            const nameParts = (authUser.profile?.name || authUser.name || "").trim().split(/\s+/);
+            const userRow = {
+              id: authUser.id,
+              email: authUser.email || email,
+              password: "",
+              first_name: nameParts[0] ?? "",
+              last_name: nameParts.slice(1).join(" ") ?? "",
+            };
+            dbUser = await storage.createUser(userRow, result.accessToken);
+            console.log(`[LOGIN] User saved to navigator: ${authUser.id}`);
+          } catch (createErr: any) {
+            if (createErr?.message?.includes("duplicate") || createErr?.message?.includes("unique") || createErr?.code === "23505") {
+              dbUser = await storage.getUser(result.user.id, result.accessToken);
+            } else {
+              console.warn('[LOGIN] Could not create user row (login still succeeds):', createErr?.message);
+            }
+          }
+        }
+      } catch (dbErr: any) {
+        console.warn('[LOGIN] DB lookup/create failed (login still succeeds):', dbErr?.message);
+      }
+
+      const apiUser = dbUser ? dbUserToApiUser(dbUser) : result.user;
+      const payload: { user: any; accessToken?: string } = { user: apiUser };
+      if (result.accessToken) payload.accessToken = result.accessToken;
+
+      console.log(`[LOGIN] Success for: ${email}`);
+      res.json(payload);
+    } catch (error: any) {
+      console.error('[LOGIN] Error:', error.message, '| errorCode:', error.errorCode);
+      if (!res.headersSent) {
+        // Insforge returns AUTH_UNAUTHORIZED for BOTH bad password AND unverified email.
+        // We can't tell the difference, so return a message that covers both cases.
+        res.status(401).json({
+          message: "Invalid email or password. If you recently signed up, make sure you've verified your email first.",
+        });
+      }
+    }
   });
 
-  app.post("/api/auth/logout", (req, res) => {
-    req.logout(() => {
-      res.json({ message: "Logged out successfully" });
-    });
-  });
-
-  app.get("/api/auth/me", requireAuth, (req, res) => {
-    const user = req.user as User;
-    const { password: _, ...userWithoutPassword } = user;
-    res.json(userWithoutPassword);
-  });
-
-  // User profile routes
-  app.patch("/api/users/profile", requireAuth, async (req, res, next) => {
+  app.post("/api/auth/verify-email", async (req, res) => {
     try {
-      const user = req.user as User;
-      const updates = req.body;
+      const { email, code } = req.body;
+      if (!email || !code) {
+        return res.status(400).json({ message: "Email and verification code are required" });
+      }
+      const { insforge: insforgeClient } = await import("./insforge");
+      const { data, error } = await insforgeClient.auth.verifyEmail({ email: email.trim(), otp: String(code).trim() });
+      if (error) {
+        return res.status(400).json({ message: error.message || "Invalid or expired verification code" });
+      }
+      if (!data) {
+        return res.status(400).json({ message: "Verification failed. Please try again." });
+      }
+
+      // Verification succeeded – user is now logged in; save to navigator DB
+      const authUser = data.user as any;
+      let dbUser: any = null;
+      if (data.accessToken && authUser) {
+        try {
+          dbUser = await storage.getUser(authUser.id, data.accessToken);
+          if (!dbUser) {
+            const nameParts = (authUser.profile?.name || authUser.name || "").trim().split(/\s+/);
+            dbUser = await storage.createUser({
+              id: authUser.id,
+              email: authUser.email || email,
+              password: "",
+              first_name: nameParts[0] ?? "",
+              last_name: nameParts.slice(1).join(" ") ?? "",
+            }, data.accessToken);
+          }
+        } catch (dbErr: any) {
+          console.warn("[VERIFY] DB save failed (verification still succeeded):", dbErr?.message);
+        }
+        try { await storage.incrementStat("vets_served", data.accessToken); } catch (_) {}
+      }
+
+      const apiUser = dbUser ? dbUserToApiUser(dbUser) : (authUser ?? { email });
+      res.json({ user: apiUser, accessToken: data.accessToken });
+    } catch (error: any) {
+      if (!res.headersSent) {
+        res.status(500).json({ message: error.message || "Verification failed" });
+      }
+    }
+  });
+
+  app.post("/api/auth/resend-verification", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ message: "Email is required" });
+      }
+      const { resendVerificationEmail: resendVerification } = await import("./insforge-auth");
+      await resendVerification(email.trim());
+      res.json({ success: true, message: "If an account exists, a new verification code has been sent." });
+    } catch (error: any) {
+      if (!res.headersSent) {
+        // Still return success to prevent user enumeration
+        res.json({ success: true, message: "If an account exists, a new verification code has been sent." });
+      }
+    }
+  });
+
+  app.post("/api/auth/logout", async (req, res) => {
+    try {
+      const session = await getInsforgeSession(req);
+      if (session) {
+        await signOutUser(session.accessToken);
+      }
+      res.json({ message: "Logged out successfully" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/auth/me", requireInsforgeAuth(), async (req, res) => {
+    const session = (req as any).insforgeSession;
+    // Return stored navigator profile so dashboard is populated from DB
+    const dbUser = await storage.getUser(session.user.id, session.accessToken);
+    const user = dbUser ? dbUserToApiUser(dbUser) : session.user;
+    res.json({ user });
+  });
+
+  // User profile routes - GET returns stored profile for dashboard population
+  app.get("/api/users/profile", requireInsforgeAuth(), async (req, res) => {
+    try {
+      const session = (req as any).insforgeSession;
+      const dbUser = await storage.getUser(session.user.id, session.accessToken);
+      if (!dbUser) {
+        return res.status(404).json({ message: "Profile not found" });
+      }
+      res.json(dbUserToApiUser(dbUser));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/users/profile", requireInsforgeAuth(), async (req, res) => {
+    try {
+      const session = (req as any).insforgeSession;
+      const user = session.user;
+      const updates = { ...req.body };
       
       // Don't allow changing password or email through this endpoint
       delete updates.password;
       delete updates.email;
       
       // Check if this is the first time saving profile (for counter)
-      const isFirstProfileSave = !user.profileCompleted && 
+      const dbUser = await storage.getUser(user.id, session.accessToken);
+      const profileCompleted = dbUser?.profile_completed ?? user.profileCompleted ?? user.profile?.profileCompleted ?? false;
+      const isFirstProfileSave = !profileCompleted && 
         (updates.firstName || updates.lastName || updates.phone || updates.address);
       
       if (isFirstProfileSave) {
         updates.profileCompleted = true;
       }
       
-      const updatedUser = await storage.updateUser(user.id, updates);
+      const dbUpdates = apiUpdatesToDbUpdates(updates);
+      const updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
       if (!updatedUser) {
         return res.status(404).json({ message: "User not found" });
       }
       
       // Increment vets served counter on first profile save
       if (isFirstProfileSave) {
-        await storage.incrementStat("vets_served");
+        await storage.incrementStat("vets_served", session.accessToken);
       }
       
-      const { password: _, ...userWithoutPassword } = updatedUser;
-      res.json(userWithoutPassword);
-    } catch (error) {
-      next(error);
+      res.json(dbUserToApiUser(updatedUser));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Service History routes
-  app.get("/api/service-history", requireAuth, async (req, res, next) => {
+  app.get("/api/service-history", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const history = await storage.getServiceHistory(user.id);
-      res.json(history);
-    } catch (error) {
-      next(error);
+      const session = (req as any).insforgeSession;
+      const history = await storage.getServiceHistory(session.user.id, session.accessToken);
+      // Convert snake_case DB rows to camelCase for the frontend
+      const mapped = (history || []).map((row: any) => ({
+        id: row.id,
+        userId: row.user_id ?? row.userId,
+        branch: row.branch,
+        component: row.component,
+        dateEntered: row.date_entered ?? row.dateEntered,
+        dateSeparated: row.date_separated ?? row.dateSeparated,
+        mos: row.mos,
+        deployments: row.deployments,
+        createdAt: row.created_at ?? row.createdAt,
+      }));
+      res.json(mapped);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/service-history", requireAuth, async (req, res, next) => {
+  app.post("/api/service-history", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
+      const session = (req as any).insforgeSession;
       const body = {
         ...req.body,
-        userId: user.id,
+        userId: session.user.id,
         dateEntered: req.body.dateEntered ? new Date(req.body.dateEntered) : undefined,
         dateSeparated: req.body.dateSeparated ? new Date(req.body.dateSeparated) : null,
       };
       const data = insertServiceHistorySchema.parse(body);
-      const history = await storage.createServiceHistory(data);
+      // Convert camelCase schema output to snake_case DB columns
+      const dbRow: Record<string, any> = {
+        user_id: data.userId,
+        branch: data.branch,
+        component: data.component,
+        date_entered: data.dateEntered instanceof Date ? data.dateEntered.toISOString() : data.dateEntered,
+        date_separated: data.dateSeparated instanceof Date ? data.dateSeparated.toISOString() : data.dateSeparated ?? null,
+        mos: data.mos ?? null,
+        deployments: data.deployments ?? null,
+      };
+      const history = await storage.createServiceHistory(dbRow, session.accessToken);
       res.json(history);
-    } catch (error) {
+    } catch (error: any) {
+      console.error("[SERVICE-HISTORY POST] Error:", error.message);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/service-history/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/service-history/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getServiceHistoryById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getServiceHistoryById(req.params.id, session.accessToken);
+      if (!existing || (existing.user_id ?? existing.userId) !== session.user.id) {
         return res.status(404).json({ message: "Service history not found" });
       }
-      const updated = await storage.updateServiceHistory(req.params.id, req.body);
+      // Convert camelCase updates to snake_case
+      const dbUpdates: Record<string, any> = {};
+      if (req.body.branch !== undefined) dbUpdates.branch = req.body.branch;
+      if (req.body.component !== undefined) dbUpdates.component = req.body.component;
+      if (req.body.dateEntered !== undefined) dbUpdates.date_entered = new Date(req.body.dateEntered).toISOString();
+      if (req.body.dateSeparated !== undefined) dbUpdates.date_separated = req.body.dateSeparated ? new Date(req.body.dateSeparated).toISOString() : null;
+      if (req.body.mos !== undefined) dbUpdates.mos = req.body.mos;
+      if (req.body.deployments !== undefined) dbUpdates.deployments = req.body.deployments;
+      const updated = await storage.updateServiceHistory(req.params.id, dbUpdates, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/service-history/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/service-history/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getServiceHistoryById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getServiceHistoryById(req.params.id, session.accessToken);
+      if (!existing || (existing.user_id ?? existing.userId) !== session.user.id) {
         return res.status(404).json({ message: "Service history not found" });
       }
-      await storage.deleteServiceHistory(req.params.id);
+      await storage.deleteServiceHistory(req.params.id, session.accessToken);
       res.json({ message: "Deleted successfully" });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Medical Conditions routes
-  app.get("/api/medical-conditions", requireAuth, async (req, res, next) => {
+  app.get("/api/medical-conditions", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const conditions = await storage.getMedicalConditions(user.id);
-      res.json(conditions);
-    } catch (error) {
-      next(error);
+      const session = (req as any).insforgeSession;
+      const conditions = await storage.getMedicalConditions(session.user.id, session.accessToken);
+      // Convert snake_case DB rows to camelCase for the frontend
+      const mapped = (conditions || []).map((row: any) => ({
+        id: row.id,
+        userId: row.user_id ?? row.userId,
+        conditionName: row.condition_name ?? row.conditionName,
+        diagnosedDate: row.diagnosed_date ?? row.diagnosedDate,
+        provider: row.provider,
+        notes: row.notes,
+        createdAt: row.created_at ?? row.createdAt,
+      }));
+      res.json(mapped);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/medical-conditions", requireAuth, async (req, res, next) => {
+  app.post("/api/medical-conditions", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
+      const session = (req as any).insforgeSession;
       const body = {
         ...req.body,
-        userId: user.id,
+        userId: session.user.id,
         diagnosedDate: req.body.diagnosedDate ? new Date(req.body.diagnosedDate) : null,
       };
       const data = insertMedicalConditionSchema.parse(body);
-      const condition = await storage.createMedicalCondition(data);
+      // Convert camelCase schema output to snake_case DB columns
+      const dbRow: Record<string, any> = {
+        user_id: data.userId,
+        condition_name: data.conditionName,
+        diagnosed_date: data.diagnosedDate instanceof Date ? data.diagnosedDate.toISOString() : data.diagnosedDate ?? null,
+        provider: data.provider ?? null,
+        notes: data.notes ?? null,
+      };
+      const condition = await storage.createMedicalCondition(dbRow, session.accessToken);
       res.json(condition);
-    } catch (error) {
+    } catch (error: any) {
+      console.error("[MEDICAL-CONDITIONS POST] Error:", error.message);
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/medical-conditions/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/medical-conditions/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getMedicalConditionById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getMedicalConditionById(req.params.id, session.accessToken);
+      if (!existing || (existing.user_id ?? existing.userId) !== session.user.id) {
         return res.status(404).json({ message: "Medical condition not found" });
       }
-      const updated = await storage.updateMedicalCondition(req.params.id, req.body);
+      // Convert camelCase updates to snake_case
+      const dbUpdates: Record<string, any> = {};
+      if (req.body.conditionName !== undefined) dbUpdates.condition_name = req.body.conditionName;
+      if (req.body.diagnosedDate !== undefined) dbUpdates.diagnosed_date = req.body.diagnosedDate ? new Date(req.body.diagnosedDate).toISOString() : null;
+      if (req.body.provider !== undefined) dbUpdates.provider = req.body.provider;
+      if (req.body.notes !== undefined) dbUpdates.notes = req.body.notes;
+      const updated = await storage.updateMedicalCondition(req.params.id, dbUpdates, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/medical-conditions/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/medical-conditions/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getMedicalConditionById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getMedicalConditionById(req.params.id, session.accessToken);
+      if (!existing || (existing.user_id ?? existing.userId) !== session.user.id) {
         return res.status(404).json({ message: "Medical condition not found" });
       }
-      await storage.deleteMedicalCondition(req.params.id);
+      await storage.deleteMedicalCondition(req.params.id, session.accessToken);
       res.json({ message: "Deleted successfully" });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Claims routes
-  app.get("/api/claims", requireAuth, async (req, res, next) => {
+  app.get("/api/claims", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const claims = await storage.getClaims(user.id);
+      const session = (req as any).insforgeSession;
+      const claims = await storage.getClaims(session.user.id, session.accessToken);
       res.json(claims);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/claims/:id", requireAuth, async (req, res, next) => {
+  app.get("/api/claims/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const claim = await storage.getClaim(req.params.id);
-      if (!claim || claim.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const claim = await storage.getClaim(req.params.id, session.accessToken);
+      if (!claim || claim.userId !== session.user.id) {
         return res.status(404).json({ message: "Claim not found" });
       }
       res.json(claim);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/claims", requireAuth, async (req, res, next) => {
+  app.post("/api/claims", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const data = insertClaimSchema.parse({ ...req.body, userId: user.id });
-      const claim = await storage.createClaim(data);
+      const session = (req as any).insforgeSession;
+      const data = insertClaimSchema.parse({ ...req.body, userId: session.user.id });
+      const claim = await storage.createClaim(data, session.accessToken);
       res.json(claim);
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/claims/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/claims/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getClaim(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getClaim(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Claim not found" });
       }
-      const updated = await storage.updateClaim(req.params.id, req.body);
+      const updated = await storage.updateClaim(req.params.id, req.body, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/claims/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/claims/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getClaim(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getClaim(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Claim not found" });
       }
-      await storage.deleteClaim(req.params.id);
+      await storage.deleteClaim(req.params.id, session.accessToken);
       res.json({ message: "Deleted successfully" });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Lay Statements routes
-  app.get("/api/lay-statements", requireAuth, async (req, res, next) => {
+  app.get("/api/lay-statements", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
+      const session = (req as any).insforgeSession;
       const { claimId } = req.query;
       
       if (claimId && typeof claimId === "string") {
-        const claim = await storage.getClaim(claimId);
-        if (!claim || claim.userId !== user.id) {
+        const claim = await storage.getClaim(claimId, session.accessToken);
+        if (!claim || claim.userId !== session.user.id) {
           return res.status(404).json({ message: "Claim not found" });
         }
-        const statements = await storage.getLayStatementsByClaim(claimId);
+        const statements = await storage.getLayStatementsByClaim(claimId, session.accessToken);
         return res.json(statements);
       }
       
-      const statements = await storage.getLayStatements(user.id);
+      const statements = await storage.getLayStatements(session.user.id, session.accessToken);
       res.json(statements);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/lay-statements", requireAuth, async (req, res, next) => {
+  app.post("/api/lay-statements", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const data = insertLayStatementSchema.parse({ ...req.body, userId: user.id });
-      const statement = await storage.createLayStatement(data);
+      const session = (req as any).insforgeSession;
+      const data = insertLayStatementSchema.parse({ ...req.body, userId: session.user.id });
+      const statement = await storage.createLayStatement(data, session.accessToken);
       res.json(statement);
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/lay-statements/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/lay-statements/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getLayStatementById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getLayStatementById(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Lay statement not found" });
       }
-      const updated = await storage.updateLayStatement(req.params.id, req.body);
+      const updated = await storage.updateLayStatement(req.params.id, req.body, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/lay-statements/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/lay-statements/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getLayStatementById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getLayStatementById(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Lay statement not found" });
       }
-      await storage.deleteLayStatement(req.params.id);
+      await storage.deleteLayStatement(req.params.id, session.accessToken);
       res.json({ message: "Deleted successfully" });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Buddy Statements routes
-  app.get("/api/buddy-statements", requireAuth, async (req, res, next) => {
+  app.get("/api/buddy-statements", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
+      const session = (req as any).insforgeSession;
       const { claimId } = req.query;
       
       if (claimId && typeof claimId === "string") {
-        const claim = await storage.getClaim(claimId);
-        if (!claim || claim.userId !== user.id) {
+        const claim = await storage.getClaim(claimId, session.accessToken);
+        if (!claim || claim.userId !== session.user.id) {
           return res.status(404).json({ message: "Claim not found" });
         }
-        const statements = await storage.getBuddyStatementsByClaim(claimId);
+        const statements = await storage.getBuddyStatementsByClaim(claimId, session.accessToken);
         return res.json(statements);
       }
       
-      const statements = await storage.getBuddyStatements(user.id);
+      const statements = await storage.getBuddyStatements(session.user.id, session.accessToken);
       res.json(statements);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/buddy-statements", requireAuth, async (req, res, next) => {
+  app.post("/api/buddy-statements", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const data = insertBuddyStatementSchema.parse({ ...req.body, userId: user.id });
-      const statement = await storage.createBuddyStatement(data);
+      const session = (req as any).insforgeSession;
+      const data = insertBuddyStatementSchema.parse({ ...req.body, userId: session.user.id });
+      const statement = await storage.createBuddyStatement(data, session.accessToken);
       res.json(statement);
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/buddy-statements/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/buddy-statements/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getBuddyStatementById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getBuddyStatementById(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Buddy statement not found" });
       }
-      const updated = await storage.updateBuddyStatement(req.params.id, req.body);
+      const updated = await storage.updateBuddyStatement(req.params.id, req.body, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/buddy-statements/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/buddy-statements/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getBuddyStatementById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getBuddyStatementById(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Buddy statement not found" });
       }
-      await storage.deleteBuddyStatement(req.params.id);
+      await storage.deleteBuddyStatement(req.params.id, session.accessToken);
       res.json({ message: "Deleted successfully" });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Documents routes
-  app.get("/api/documents", requireAuth, async (req, res, next) => {
+  app.get("/api/documents", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
+      const session = (req as any).insforgeSession;
       const { claimId } = req.query;
       
       if (claimId && typeof claimId === "string") {
-        const claim = await storage.getClaim(claimId);
-        if (!claim || claim.userId !== user.id) {
+        const claim = await storage.getClaim(claimId, session.accessToken);
+        if (!claim || claim.userId !== session.user.id) {
           return res.status(404).json({ message: "Claim not found" });
         }
-        const documents = await storage.getDocumentsByClaim(claimId);
+        const documents = await storage.getDocumentsByClaim(claimId, session.accessToken);
         return res.json(documents);
       }
       
-      const documents = await storage.getDocuments(user.id);
+      const documents = await storage.getDocuments(session.user.id, session.accessToken);
       res.json(documents);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/documents/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/documents/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getDocumentById(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getDocumentById(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Document not found" });
       }
-      await storage.deleteDocument(req.params.id);
+      await storage.deleteDocument(req.params.id, session.accessToken);
       res.json({ message: "Deleted successfully" });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Appeals routes
-  app.get("/api/appeals", requireAuth, async (req, res, next) => {
+  app.get("/api/appeals", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const appeals = await storage.getAppeals(user.id);
+      const session = (req as any).insforgeSession;
+      const appeals = await storage.getAppeals(session.user.id, session.accessToken);
       res.json(appeals);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/appeals/:id", requireAuth, async (req, res, next) => {
+  app.get("/api/appeals/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const appeal = await storage.getAppeal(req.params.id);
-      if (!appeal || appeal.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const appeal = await storage.getAppeal(req.params.id, session.accessToken);
+      if (!appeal || appeal.userId !== session.user.id) {
         return res.status(404).json({ message: "Appeal not found" });
       }
       res.json(appeal);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/appeals", requireAuth, async (req, res, next) => {
+  app.post("/api/appeals", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const data = insertAppealSchema.parse({ ...req.body, userId: user.id });
-      const appeal = await storage.createAppeal(data);
+      const session = (req as any).insforgeSession;
+      const data = insertAppealSchema.parse({ ...req.body, userId: session.user.id });
+      const appeal = await storage.createAppeal(data, session.accessToken);
       res.json(appeal);
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/appeals/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/appeals/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getAppeal(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getAppeal(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Appeal not found" });
       }
-      const updated = await storage.updateAppeal(req.params.id, req.body);
+      const updated = await storage.updateAppeal(req.params.id, req.body, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/appeals/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/appeals/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getAppeal(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getAppeal(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Appeal not found" });
       }
-      await storage.deleteAppeal(req.params.id);
+      await storage.deleteAppeal(req.params.id, session.accessToken);
       res.json({ message: "Deleted successfully" });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Referral routes
-  app.get("/api/referrals", requireAuth, async (req, res, next) => {
+  app.get("/api/referrals", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const referrals = await storage.getReferrals(user.id);
+      const session = (req as any).insforgeSession;
+      const referrals = await storage.getReferrals(session.user.id, session.accessToken);
       res.json(referrals);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/referrals/stats", requireAuth, async (req, res, next) => {
+  app.get("/api/referrals/stats", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const stats = await storage.getReferralStats(user.id);
+      const session = (req as any).insforgeSession;
+      const stats = await storage.getReferralStats(session.user.id, session.accessToken);
       res.json(stats);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/referrals/code/:code", async (req, res, next) => {
+  app.get("/api/referrals/code/:code", async (req, res) => {
     try {
       const referral = await storage.getReferralByCode(req.params.code);
       if (!referral) {
         return res.status(404).json({ message: "Referral code not found" });
       }
       res.json({ valid: true, referrerId: referral.referrerId });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/referrals", requireAuth, async (req, res, next) => {
+  app.post("/api/referrals", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const code = `VET${user.id.substring(0, 4).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const session = (req as any).insforgeSession;
+      const code = `VET${session.user.id.substring(0, 4).toUpperCase()}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
       const data = {
-        referrerId: user.id,
+        referrerId: session.user.id,
         referralCode: code,
         referredEmail: req.body.referredEmail || null,
       };
-      const referral = await storage.createReferral(data);
+      const referral = await storage.createReferral(data, session.accessToken);
       res.json(referral);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/referrals/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/referrals/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getReferralById(req.params.id);
-      if (!existing || existing.referrerId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getReferralById(req.params.id, session.accessToken);
+      if (!existing || existing.referrerId !== session.user.id) {
         return res.status(404).json({ message: "Referral not found" });
       }
-      const updated = await storage.updateReferral(req.params.id, req.body);
+      const updated = await storage.updateReferral(req.params.id, req.body, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.delete("/api/referrals/:id", requireAuth, async (req, res, next) => {
+  app.delete("/api/referrals/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getReferralById(req.params.id);
-      if (!existing || existing.referrerId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getReferralById(req.params.id, session.accessToken);
+      if (!existing || existing.referrerId !== session.user.id) {
         return res.status(404).json({ message: "Referral not found" });
       }
-      await storage.deleteReferral(req.params.id);
+      await storage.deleteReferral(req.params.id, session.accessToken);
       res.json({ success: true });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Consultation routes (public - no auth required for booking)
-  app.get("/api/consultations", requireAuth, async (req, res, next) => {
+  app.get("/api/consultations", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const consultations = await storage.getConsultations(user.id);
+      const session = (req as any).insforgeSession;
+      const consultations = await storage.getConsultations(session.user.id, session.accessToken);
       res.json(consultations);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/consultations/:id", requireAuth, async (req, res, next) => {
+  app.get("/api/consultations/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const consultation = await storage.getConsultation(req.params.id);
-      if (!consultation || consultation.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const consultation = await storage.getConsultation(req.params.id, session.accessToken);
+      if (!consultation || consultation.userId !== session.user.id) {
         return res.status(404).json({ message: "Consultation not found" });
       }
       res.json(consultation);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/consultations", async (req, res, next) => {
+  app.post("/api/consultations", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User | undefined;
+      const session = (req as any).insforgeSession;
       const data = insertConsultationSchema.parse({
         ...req.body,
-        userId: user?.id || null,
+        userId: session.user.id,
         scheduledDate: new Date(req.body.scheduledDate),
       });
-      const consultation = await storage.createConsultation(data);
+      const consultation = await storage.createConsultation(data, session.accessToken);
       res.json(consultation);
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.patch("/api/consultations/:id", requireAuth, async (req, res, next) => {
+  app.patch("/api/consultations/:id", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getConsultation(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getConsultation(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Consultation not found" });
       }
-      const updated = await storage.updateConsultation(req.params.id, req.body);
+      const updated = await storage.updateConsultation(req.params.id, req.body, session.accessToken);
       res.json(updated);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/consultations/:id/cancel", requireAuth, async (req, res, next) => {
+  app.post("/api/consultations/:id/cancel", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
-      const existing = await storage.getConsultation(req.params.id);
-      if (!existing || existing.userId !== user.id) {
+      const session = (req as any).insforgeSession;
+      const existing = await storage.getConsultation(req.params.id, session.accessToken);
+      if (!existing || existing.userId !== session.user.id) {
         return res.status(404).json({ message: "Consultation not found" });
       }
-      const cancelled = await storage.cancelConsultation(req.params.id);
+      const cancelled = await storage.cancelConsultation(req.params.id, session.accessToken);
       res.json(cancelled);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
   // AI Research Routes
-  app.post("/api/ai/research", async (req, res, next) => {
+  app.post("/api/ai/research", async (req, res) => {
     try {
       const { feature, query, context } = req.body;
       
@@ -770,12 +1015,12 @@ export async function registerRoutes(
 
       const response = await getFeatureResearch(feature, query, context);
       res.json({ response });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/ai/condition-guidance", async (req, res, next) => {
+  app.post("/api/ai/condition-guidance", async (req, res) => {
     try {
       const { conditionName } = req.body;
       
@@ -785,12 +1030,12 @@ export async function registerRoutes(
 
       const guidance = await getConditionGuidance(conditionName);
       res.json(guidance);
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/ai/generate-lay-statement", requireAuth, async (req, res, next) => {
+  app.post("/api/ai/generate-lay-statement", requireInsforgeAuth(), async (req, res) => {
     try {
       const { conditionName, symptoms, dailyImpact, serviceConnection } = req.body;
       
@@ -800,12 +1045,12 @@ export async function registerRoutes(
 
       const draft = await generateLayStatementDraft(conditionName, symptoms, dailyImpact, serviceConnection);
       res.json({ draft });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/ai/generate-buddy-statement", requireAuth, async (req, res, next) => {
+  app.post("/api/ai/generate-buddy-statement", requireInsforgeAuth(), async (req, res) => {
     try {
       const { conditionName, relationship, observedSymptoms } = req.body;
       
@@ -815,8 +1060,8 @@ export async function registerRoutes(
 
       const template = await generateBuddyStatementTemplate(conditionName, relationship, observedSymptoms);
       res.json({ template });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -843,7 +1088,7 @@ export async function registerRoutes(
     })).optional().default([])
   });
 
-  app.post("/api/ai/generate-claim-memorandum", requireAuth, async (req, res, next) => {
+  app.post("/api/ai/generate-claim-memorandum", requireInsforgeAuth(), async (req, res) => {
     try {
       const parseResult = claimMemorandumSchema.safeParse(req.body);
       
@@ -857,51 +1102,142 @@ export async function registerRoutes(
       const data = parseResult.data;
       const memorandum = await generateClaimMemorandum(data);
       res.json({ memorandum });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Claim memorandum generation error:", error);
-      res.status(500).json({ message: "Failed to generate claim memorandum. Please try again." });
+      res.status(500).json({ message: error.message || "Failed to generate claim memorandum. Please try again." });
+    }
+  });
+
+  app.post("/api/ai/analyze-medical-records", requireInsforgeAuth(), async (req, res) => {
+    try {
+      const { fileData, fileType, fileName, extractedText, serverFilePath } = req.body;
+      const fileDataLen = typeof fileData === "string" ? fileData.length : 0;
+      console.log("[ANALYZE] Request received:", {
+        serverFilePath: serverFilePath || "(none)",
+        fileDataLength: fileDataLen,
+        fileType,
+        fileName,
+        hasExtractedText: !!(extractedText && extractedText.trim()),
+      });
+
+      // Primary path: read file from server disk (avoids large base64 payloads)
+      if (serverFilePath) {
+        const resolvedPath = path.resolve(String(serverFilePath));
+        const resolvedTempDir = path.resolve(TEMP_UPLOAD_DIR);
+
+        if (!resolvedPath.startsWith(resolvedTempDir)) {
+          console.error("[ANALYZE] Path outside temp dir:", resolvedPath, "vs", resolvedTempDir);
+          return res.status(400).json({ message: "Invalid file path" });
+        }
+        if (!fs.existsSync(resolvedPath)) {
+          console.error("[ANALYZE] File not found on disk:", resolvedPath);
+          return res.status(404).json({ message: "Uploaded file not found on server. Please re-upload the document." });
+        }
+
+        const stats = fs.statSync(resolvedPath);
+        console.log(`[ANALYZE] Reading file from disk: ${resolvedPath} (${(stats.size / (1024 * 1024)).toFixed(1)}MB)`);
+
+        const fileBuffer = fs.readFileSync(resolvedPath);
+        const result = await analyzeMedicalRecords(
+          "",
+          fileType || "application/octet-stream",
+          fileName || "document",
+          extractedText,
+          fileBuffer
+        );
+
+        console.log(`[ANALYZE] Analysis complete: ${result.diagnoses.length} diagnoses found`);
+
+        // Clean up temp file after successful analysis
+        try { fs.unlinkSync(resolvedPath); } catch {}
+        return res.json(result);
+      }
+
+      // Legacy path: base64 fileData in request body (for small files / fallback)
+      if (!fileData && !extractedText) {
+        console.error("[ANALYZE] No file data and no extracted text in request");
+        return res.status(400).json({ message: "No file data received. Please re-upload the document." });
+      }
+      console.log(`[ANALYZE] Using legacy base64 path: fileData=${fileDataLen} chars`);
+      const result = await analyzeMedicalRecords(
+        fileData || "",
+        fileType || "application/octet-stream",
+        fileName || "document",
+        extractedText
+      );
+      console.log(`[ANALYZE] Analysis complete: ${result.diagnoses.length} diagnoses found`);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[ANALYZE] Analysis error:", error.message, error.stack?.slice(0, 500));
+      res.status(500).json({ message: error.message || "Failed to analyze medical records. Please try again." });
     }
   });
 
   // Public stats endpoint (no auth required for landing page)
-  app.get("/api/stats/vets-served", async (req, res, next) => {
+  app.get("/api/stats/vets-served", async (req, res) => {
     try {
       // Initialize the counter with starting value if it doesn't exist
       await storage.initializeStat("vets_served", 526);
       const count = await storage.getStat("vets_served");
       res.json({ count });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  // Stripe API routes
-  app.get("/api/stripe/products", async (req, res, next) => {
+  // Stripe API routes - Query Stripe API directly (no database needed)
+  app.get("/api/stripe/products", async (req, res) => {
     try {
-      const products = await storage.getStripeProducts();
-      res.json({ data: products });
-    } catch (error) {
-      next(error);
+      const { getUncachableStripeClient } = await import("./stripeClient");
+      const stripe = await getUncachableStripeClient();
+      const products = await stripe.products.list({ active: true });
+      res.json({ data: products.data });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/stripe/prices", async (req, res, next) => {
+  app.get("/api/stripe/prices", async (req, res) => {
     try {
-      const prices = await storage.getStripePrices();
-      res.json({ data: prices });
-    } catch (error) {
-      next(error);
+      const { getUncachableStripeClient } = await import("./stripeClient");
+      const stripe = await getUncachableStripeClient();
+      const prices = await stripe.prices.list({ active: true });
+      res.json({ data: prices.data });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/stripe/publishable-key", async (req, res, next) => {
+  app.get("/api/stripe/publishable-key", async (req, res) => {
     try {
       const { getStripePublishableKey } = await import("./stripeClient");
       const key = await getStripePublishableKey();
       res.json({ publishableKey: key });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
+  });
+
+  app.get("/api/stripe/status", async (_req, res) => {
+    try {
+      const hasKeys = !!(process.env.STRIPE_PUBLISHABLE_KEY && process.env.STRIPE_SECRET_KEY);
+      const webhookConfigured = !!process.env.STRIPE_WEBHOOK_SECRET;
+      res.json({
+        connected: hasKeys,
+        webhookConfigured,
+        dashboardUrl: "https://dashboard.stripe.com",
+      });
+    } catch {
+      res.json({ connected: false, webhookConfigured: false, dashboardUrl: "https://dashboard.stripe.com" });
+    }
+  });
+
+  // Price IDs from env so you use your Stripe account's prices (avoids "no such price" errors)
+  app.get("/api/stripe/price-ids", (_req, res) => {
+    const pro = (process.env.STRIPE_PRICE_ID_PRO || "").trim();
+    const deluxe = (process.env.STRIPE_PRICE_ID_DELUXE || "").trim();
+    const business = (process.env.STRIPE_PRICE_ID_BUSINESS || "").trim();
+    res.json({ pro: pro || null, deluxe: deluxe || null, business: business || null });
   });
 
   // Contact form endpoint
@@ -913,7 +1249,7 @@ export async function registerRoutes(
     contactType: z.enum(["admin", "billing"])
   });
 
-  app.post("/api/contact", async (req, res, next) => {
+  app.post("/api/contact", async (req, res) => {
     try {
       const parseResult = contactSchema.safeParse(req.body);
       if (!parseResult.success) {
@@ -937,33 +1273,33 @@ export async function registerRoutes(
         success: true, 
         message: "Your message has been sent successfully" 
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Contact form error:", error);
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Diagnostic endpoint to check promo codes (admin only - remove in production)
-  app.get("/api/stripe/promo-codes", requireAuth, async (req, res, next) => {
+  app.get("/api/stripe/promo-codes", requireInsforgeAuth(), async (req, res) => {
     try {
       const { stripeService } = await import("./stripeService");
       const promoCodes = await stripeService.listPromotionCodes();
       res.json({ promoCodes });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching promo codes:", error);
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
   // Verify specific promo code
-  app.get("/api/stripe/promo-codes/:id", requireAuth, async (req, res, next) => {
+  app.get("/api/stripe/promo-codes/:id", requireInsforgeAuth(), async (req, res) => {
     try {
       const { stripeService } = await import("./stripeService");
       const result = await stripeService.verifyPromotionCode(req.params.id);
       res.json(result);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error verifying promo code:", error);
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -972,9 +1308,10 @@ export async function registerRoutes(
     tier: z.enum(["pro", "deluxe", "business"]).optional().default("pro")
   });
 
-  app.post("/api/stripe/checkout", requireAuth, async (req, res, next) => {
+  app.post("/api/stripe/checkout", requireInsforgeAuth(), async (req, res) => {
     try {
-      const user = req.user as User;
+      const session = (req as any).insforgeSession;
+      const user = session.user;
       
       const parseResult = checkoutSchema.safeParse(req.body);
       if (!parseResult.success) {
@@ -986,10 +1323,32 @@ export async function registerRoutes(
       
       const { priceId, tier } = parseResult.data;
 
+      // Only allow price IDs configured in env (avoids "no such price" from wrong/hardcoded IDs)
+      const allowedPro = (process.env.STRIPE_PRICE_ID_PRO || "").trim();
+      const allowedDeluxe = (process.env.STRIPE_PRICE_ID_DELUXE || "").trim();
+      const allowedBusiness = (process.env.STRIPE_PRICE_ID_BUSINESS || "").trim();
+      const allowedIds = [allowedPro, allowedDeluxe, allowedBusiness].filter(Boolean);
+      if (!allowedIds.length) {
+        return res.status(503).json({
+          message: "Payment is not configured. Admin: set STRIPE_PRICE_ID_PRO and STRIPE_PRICE_ID_DELUXE in .env from your Stripe Dashboard.",
+        });
+      }
+      if (!allowedIds.includes(priceId)) {
+        return res.status(400).json({
+          message: "Invalid price for this tier. Use the price IDs from your Stripe Dashboard and set STRIPE_PRICE_ID_PRO / STRIPE_PRICE_ID_DELUXE in .env.",
+        });
+      }
+
       const { stripeService } = await import("./stripeService");
 
+      // Get user from database to check stripeCustomerId
+      const dbUser = await storage.getUser(user.id, session.accessToken);
+      if (!dbUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
       // Create or get customer (verify existing customer still exists in Stripe)
-      let customerId = user.stripeCustomerId;
+      let customerId = dbUser.stripeCustomerId;
       let needsNewCustomer = !customerId;
       
       if (customerId) {
@@ -1002,27 +1361,96 @@ export async function registerRoutes(
       
       if (needsNewCustomer) {
         const customer = await stripeService.createCustomer(user.email, user.id);
-        await storage.updateUser(user.id, { stripeCustomerId: customer.id });
+        await storage.updateUser(user.id, { stripeCustomerId: customer.id }, session.accessToken);
         customerId = customer.id;
       }
 
-      // Create checkout session using service
-      const session = await stripeService.createCheckoutSession(
+      // Create checkout session with metadata so webhook can update user tier
+      const checkoutSession = await stripeService.createCheckoutSession(
         customerId!,
         priceId,
         `${req.protocol}://${req.get('host')}/dashboard?payment=success&tier=${tier}`,
-        `${req.protocol}://${req.get('host')}/dashboard?payment=cancelled`
+        `${req.protocol}://${req.get('host')}/dashboard?payment=cancelled`,
+        undefined,
+        { userId: user.id, tier }
       );
 
-      res.json({ url: session.url });
-    } catch (error) {
+      res.json({ url: checkoutSession.url });
+    } catch (error: any) {
       console.error("Stripe checkout error:", error);
-      next(error);
+      res.status(500).json({ message: error.message });
     }
   });
 
-  // Register object storage routes for file uploads
-  registerObjectStorageRoutes(app);
+  // File upload routes using Insforge storage
+  app.post("/api/uploads/request-url", requireInsforgeAuth(), async (req, res) => {
+    try {
+      const { name, size, contentType } = req.body;
+      
+      if (!name) {
+        return res.status(400).json({
+          error: "Missing required field: name",
+        });
+      }
+
+      const objectId = randomUUID();
+      const storagePath = `uploads/${objectId}/${name}`;
+      
+      // Return uploadURL that points to our file upload endpoint
+      // The frontend will PUT the raw file bytes to this URL
+      res.json({
+        uploadURL: `/api/storage/upload/${storagePath}`,
+        objectPath: `/objects/${storagePath}`,
+        metadata: { name, size, contentType },
+      });
+    } catch (error: any) {
+      console.error("Error generating upload path:", error);
+      res.status(500).json({ error: "Failed to generate upload path" });
+    }
+  });
+
+  // Serve/download files - tries Insforge storage first, falls back to local temp directory
+  app.get("/objects/:path(*)", async (req, res) => {
+    try {
+      const objectPath = req.params.path;
+      const filePath = objectPath.replace(/^\/?objects\//, '');
+
+      // Try Insforge storage first
+      try {
+        await insforgeStorage.serveFile(filePath, res);
+        return;
+      } catch (storageErr: any) {
+        console.warn("Insforge storage serve failed, checking local files:", storageErr.message);
+      }
+
+      // Fallback: look for the file in temp-uploads (matches by filename suffix)
+      const files = fs.readdirSync(TEMP_UPLOAD_DIR);
+      const normalizedPath = filePath.replace(/\//g, '_');
+      const matchingFile = files.find(f => f.endsWith(normalizedPath));
+      if (matchingFile) {
+        const localPath = path.join(TEMP_UPLOAD_DIR, matchingFile);
+        const buffer = fs.readFileSync(localPath);
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeMap: Record<string, string> = {
+          '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+          '.png': 'image/png', '.gif': 'image/gif', '.doc': 'application/msword',
+          '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        };
+        res.set({
+          'Content-Type': mimeMap[ext] || 'application/octet-stream',
+          'Content-Length': buffer.length.toString(),
+        });
+        return res.send(buffer);
+      }
+
+      res.status(404).json({ error: "File not found" });
+    } catch (error: any) {
+      console.error("Error serving file:", error);
+      if (!res.headersSent) {
+        res.status(404).json({ error: "File not found" });
+      }
+    }
+  });
 
   return httpServer;
 }

@@ -1,81 +1,20 @@
 # VA Claim Navigator
 
-A comprehensive full-stack web application designed to empower veterans in filing VA disability claims. The platform simplifies the claims process, ensures accuracy, and maximizes veterans' chances of receiving deserved benefits through guided claim building, AI-powered document generation, and comprehensive tracking tools.
+A comprehensive platform designed to empower veterans in filing VA disability claims. Built with React, Express.js, and Insforge backend.
 
-## 🎯 Overview
+## 🚀 Quick Start
 
-VA Claim Navigator is a veteran-focused platform that helps users navigate the complex VA disability claims process. It provides intelligent claim building, document management, AI-powered statement generation, appeals tracking, and educational resources—all in one unified platform.
-
-## ✨ Key Features
-
-### 🏗️ Intelligent Claim Builder
-- **Guided Claim Process**: Step-by-step wizard to build comprehensive disability claims
-- **Service History Management**: Track military service periods and deployments
-- **Medical History Tracking**: Document conditions, diagnoses, and service connections
-- **Evidence Management**: Upload and organize supporting documentation
-- **AI-Powered Memorandum Generation**: Automatically generate legally compliant claim memorandums
-
-### 📝 Document Generation
-- **Lay Statement Builder**: Create detailed personal statements about conditions
-- **Buddy Statement Coordination**: Generate statements from fellow service members
-- **Claim Package PDF Export**: Download complete claim packages for submission
-
-### 📊 Appeals & Tracking
-- **Appeals Management**: Track appeal status and deadlines
-- **Supplemental Claims Hub**: Manage additional evidence submissions
-- **Claim Status Dashboard**: Monitor all active claims in one place
-
-### 🎓 Educational Resources
-- **VA Education Library**: Access guides and resources about the claims process
-- **TDIU Calculator**: Assess Total Disability Individual Unemployability eligibility
-- **Warrior Coach**: AI-powered guidance throughout the claims process
-
-### 👤 User Management
-- **User Profiles**: Manage personal information and service details
-- **Subscription Management**: Multiple pricing tiers with Stripe integration
-- **Referral Program**: Earn credits by referring other veterans
-- **Consultation Booking**: Schedule appointments with VA claims experts
-
-## 🛠️ Tech Stack
-
-### Frontend
-- **Framework**: React 19 with TypeScript
-- **UI Library**: shadcn/ui (built on Radix UI)
-- **Styling**: Tailwind CSS v4
-- **State Management**: TanStack React Query + React Context
-- **Routing**: Wouter
-- **Build Tool**: Vite
-- **Typography**: Merriweather (headings) + Inter (UI)
-
-### Backend
-- **Framework**: Express.js with TypeScript
-- **Database**: PostgreSQL with Drizzle ORM
-- **Authentication**: Passport.js (Local Strategy) with bcryptjs
-- **Validation**: Zod schema validation
-- **AI Integration**: OpenAI API for document generation
-- **File Storage**: Google Cloud Storage / Object Storage
-- **Payments**: Stripe integration
-
-### Development Tools
-- **TypeScript**: Type-safe development
-- **ESBuild**: Fast bundling
-- **Drizzle Kit**: Database migrations
-- **Insforge MCP**: Backend platform integration
-
-## 📋 Prerequisites
-
-- **Node.js** 20.x or higher
-- **npm** or **yarn**
-- **PostgreSQL** 16 or higher
-- **Git**
-
-## 🚀 Getting Started
+### Prerequisites
+- Node.js 20+
+- npm or yarn
+- Insforge backend account
+- Stripe account (for payments)
 
 ### Installation
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/theealexharris/VA-Claim-Navigator-Cursor.git
+   git clone https://github.com/theealexharris/VA-Claim-Navigator-Cursor
    cd VA-Claim-Navigator-Cursor
    ```
 
@@ -86,137 +25,152 @@ VA Claim Navigator is a veteran-focused platform that helps users navigate the c
 
 3. **Set up environment variables**
    
-   Create a `.env` file in the root directory with the following variables:
+   Create a `.env` file in the root directory:
    ```env
-   # Database
-   DATABASE_URL=postgresql://user:password@localhost:5432/va_claim_navigator
-   
-   # Session
-   SESSION_SECRET=your-session-secret-here
-   
-   # OpenAI (for AI features)
-   OPENAI_API_KEY=your-openai-api-key
-   
-   # Stripe (for payments)
-   STRIPE_SECRET_KEY=your-stripe-secret-key
+   # Insforge Configuration
+   INSFORGE_API_BASE_URL=https://your-insforge-backend.insforge.app
+   INSFORGE_ANON_KEY=your-insforge-anon-key
+
+   # Stripe Configuration
    STRIPE_PUBLISHABLE_KEY=your-stripe-publishable-key
-   
-   # Server
+   STRIPE_SECRET_KEY=your-stripe-secret-key
+
+   # Server Configuration
    PORT=5000
    NODE_ENV=development
    ```
 
-4. **Set up the database**
+4. **Run the development server**
    ```bash
-   npm run db:push
+   npm run dev
    ```
 
-### Running the Application
+   The application will be available at `http://localhost:5000`
 
-**Development Mode:**
+## 🏗️ Architecture
 
-Start the frontend development server:
-```bash
-npm run dev:client
-```
+### Frontend
+- **Framework**: React 19 with TypeScript
+- **UI**: shadcn/ui (Radix UI) + Tailwind CSS v4
+- **State Management**: TanStack React Query + React Context
+- **Routing**: Wouter
+- **Build**: Vite
 
-In a separate terminal, start the backend server:
-```bash
-# Windows PowerShell
-$env:NODE_ENV="development"; npm run dev
+### Backend
+- **Framework**: Express.js with TypeScript
+- **Authentication**: Insforge Auth SDK (token-based)
+- **Database**: Insforge Database SDK (PostgreSQL via PostgREST)
+- **Storage**: Insforge Storage SDK
+- **Payments**: Stripe API
 
-# Linux/Mac
-NODE_ENV=development npm run dev
-```
-
-The application will be available at:
-- **Frontend**: http://localhost:5000
-- **Backend API**: http://localhost:5000/api
-
-**Production Build:**
-
-```bash
-npm run build
-npm start
-```
+### Database
+- **Platform**: Insforge (PostgreSQL)
+- **Schema**: Defined in `shared/schema.ts`
+- **Tables**: users, service_history, medical_conditions, claims, lay_statements, buddy_statements, documents, appeals, referrals, consultations, site_stats
 
 ## 📁 Project Structure
 
 ```
-VA-Claim-Navigator-Cursor/
-├── client/                 # Frontend React application
-│   ├── src/
-│   │   ├── components/     # React components
-│   │   ├── pages/          # Page components
-│   │   ├── hooks/          # Custom React hooks
-│   │   ├── contexts/       # React contexts
-│   │   └── lib/            # Utility functions
-│   └── public/             # Static assets
-├── server/                 # Backend Express application
-│   ├── routes.ts           # API route definitions
-│   ├── storage.ts          # Database operations
-│   ├── ai-service.ts      # AI document generation
-│   └── replit_integrations/ # Platform integrations
-├── shared/                 # Shared code between frontend/backend
-│   └── schema.ts           # Database schema definitions
-├── script/                 # Build and utility scripts
-├── attached_assets/        # Project assets and documents
-└── package.json           # Dependencies and scripts
+├── client/                 # React frontend
+│   └── src/
+│       ├── components/    # React components
+│       ├── contexts/      # React contexts (Auth, etc.)
+│       ├── hooks/         # Custom React hooks
+│       ├── lib/           # Utilities and API clients
+│       └── pages/         # Page components
+├── server/                # Express.js backend
+│   ├── insforge.ts        # Insforge client configuration
+│   ├── insforge-auth.ts   # Authentication service
+│   ├── insforge-storage.ts # File storage service
+│   ├── insforge-storage-service.ts # Database service
+│   └── routes.ts          # API routes
+├── shared/                # Shared code (types, schemas)
+│   └── schema.ts          # Database schema definitions
+└── migrations/            # Database migration scripts
 ```
 
-## 🔑 Key Features Explained
+## 🔐 Authentication
 
-### AI-Powered Claim Memorandum Generation
-The platform uses advanced AI to generate legally compliant claim memorandums by:
-- Analyzing user-submitted medical conditions and evidence
-- Referencing 38 CFR Part 4 Diagnostic Codes
-- Incorporating relevant case law precedents
-- Following VA procedures and regulations
-- Creating personalized, accurate claim documents
+The application uses Insforge Auth SDK with token-based authentication:
 
-### Service Connection Tracking
-- Track multiple service periods
-- Document deployments and locations
-- Link medical conditions to service periods
-- Calculate service connection percentages
+- **Registration**: Creates user account in Insforge
+- **Login**: Returns `{user, accessToken}` - token stored in localStorage
+- **Protected Routes**: Require `Authorization: Bearer {token}` header
+- **Logout**: Clears token from localStorage
 
-### Evidence Management
-- Upload multiple document types
-- Organize evidence by condition
-- Generate evidence lists automatically
-- Export complete evidence packages
+## 🗄️ Database
+
+All database operations use Insforge Database SDK. The database schema is defined in `shared/schema.ts` and has been migrated to Insforge.
+
+### Key Tables
+- `users` - User accounts and profiles
+- `service_history` - Military service records
+- `medical_conditions` - Medical conditions
+- `claims` - VA disability claims
+- `lay_statements` - Personal statements
+- `buddy_statements` - Buddy statements
+- `documents` - Evidence documents
+- `referrals` - Referral program
+- `consultations` - Consultation bookings
+- `appeals` - Appeals
+- `site_stats` - Site statistics
+
+## 📦 Storage
+
+File uploads use Insforge Storage SDK:
+- **Bucket**: `uploads` (private, authentication required)
+- **Upload**: Files uploaded to Insforge storage
+- **Download**: Files served via `/objects/:path` route
+
+## 💳 Payments
+
+Stripe integration for subscription payments:
+- Products and prices queried from Stripe API
+- Checkout sessions created via Stripe API
+- Webhook handling for payment events
+
+## 🧪 Development
+
+### Available Scripts
+
+- `npm run dev` - Start development server (client + API)
+- `npm run dev:client` - Start only frontend dev server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run check` - Type check TypeScript
+
+### Environment Variables
+
+See `.env.example` for required environment variables.
+
+## 📚 Documentation
+
+- `MIGRATION_COMPLETE.md` - Complete migration summary
+- `MIGRATION_TO_INSFORGE.md` - Detailed migration guide
+- `INSFORGE_SETUP.md` - Quick setup guide
+- `DEPRECATED_REPLIT.md` - Notes about deprecated Replit code
+
+## 🔄 Migration Status
+
+✅ **Migration Complete** - Successfully migrated from Replit to Insforge:
+- ✅ Authentication (Passport.js → Insforge Auth)
+- ✅ Database (Drizzle ORM → Insforge Database SDK)
+- ✅ Storage (Replit Object Storage → Insforge Storage SDK)
+- ✅ All routes updated
+- ✅ Frontend updated for token-based auth
+- ✅ Database schema created in Insforge
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
-## 📝 License
+## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT
 
 ## 🙏 Acknowledgments
 
-- Built with care for the veteran community
-- Designed to simplify the VA claims process
-- Powered by modern web technologies
-
-## 📞 Support
-
-For support, please open an issue in the GitHub repository or contact the development team.
-
-## 🔒 Security
-
-- All passwords are hashed using bcryptjs
-- Session-based authentication with secure cookies
-- API keys and sensitive data should never be committed to the repository
-- Use environment variables for all sensitive configuration
-
----
-
-**Made with ❤️ for Veterans**
+Built to help veterans navigate the VA claims process with confidence and ease.

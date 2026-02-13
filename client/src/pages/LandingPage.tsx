@@ -27,18 +27,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useToast } from "@/hooks/use-toast";
+import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import heroVideo from "@assets/Claim_navigator_video_1768853413666.mp4";
 import avatar1 from "@assets/stock_images/diverse_professional_43b32cf6.jpg";
 import avatar2 from "@assets/stock_images/diverse_professional_31dd8b43.jpg";
 import avatar3 from "@assets/stock_images/diverse_professional_7cce766a.jpg";
 import avatar4 from "@assets/stock_images/diverse_professional_b621c6df.jpg";
 
-const TIER_PRICE_IDS: Record<string, string> = {
-  pro: "price_1StA6uBWobRZKfqjxgQpF5W6",  // $47 Ambassador Promotion price
-  deluxe: "price_1StACoBWobRZKfqjXUH6tIQN"  // $499 Ambassador Promotion price
-};
-
 export default function LandingPage() {
+  const { toast } = useToast();
+  const { getPriceId } = useStripePriceIds();
   const [showGetStarted, setShowGetStarted] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState("");
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
@@ -122,13 +121,13 @@ export default function LandingPage() {
   };
 
   const handleCheckout = async () => {
-    const priceId = TIER_PRICE_IDS[selectedTier.tier];
-    if (!priceId) return;
+    const priceId = getPriceId(selectedTier.tier);
+    if (!priceId) {
+      toast({ title: "Payment not configured", description: "This plan is not available for checkout right now. Please try again later.", variant: "destructive" });
+      return;
+    }
 
     setIsProcessingPayment(true);
-    
-    // Open new window immediately on user gesture to avoid popup blocker
-    const paymentWindow = window.open('about:blank', '_blank');
     
     try {
       const response = await fetch("/api/stripe/checkout", {
@@ -139,27 +138,25 @@ export default function LandingPage() {
       });
 
       if (response.status === 401) {
-        if (paymentWindow) paymentWindow.close();
         window.location.href = `/signup?tier=${selectedTier.tier}`;
         return;
       }
 
       const data = await response.json();
-      if (data.url) {
+      const checkoutUrl = typeof data?.url === "string" && data.url.startsWith("https://") ? data.url : null;
+      if (checkoutUrl) {
         setShowPaymentDialog(false);
-        // Navigate the pre-opened window to Stripe checkout
-        if (paymentWindow) {
-          paymentWindow.location.href = data.url;
-        } else {
-          // Fallback if popup was blocked
-          window.location.assign(data.url);
-        }
+        // Only open the window AFTER we have a valid Stripe URL (never about:blank)
+        window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
       } else {
-        if (paymentWindow) paymentWindow.close();
-        console.error("No checkout URL returned");
+        const errorMessage = data?.message || "Unable to create checkout session. Please try again.";
+        setShowPaymentDialog(false);
+        toast({ title: "Payment Error", description: errorMessage, variant: "destructive" });
+        console.error("No checkout URL returned", data);
       }
     } catch (error) {
-      if (paymentWindow) paymentWindow.close();
+      setShowPaymentDialog(false);
+      toast({ title: "Payment Error", description: "Failed to process payment. Please try again.", variant: "destructive" });
       console.error("Checkout error:", error);
     } finally {
       setIsProcessingPayment(false);
@@ -423,9 +420,8 @@ export default function LandingPage() {
                   <span className="text-4xl font-bold text-primary">FREE</span>
                 </div>
                 <ul className="space-y-3 mb-6 text-sm">
-                  <PricingFeature>Basic Claim Builder</PricingFeature>
+                  <PricingFeature>Free 30-min 1:1 consult call</PricingFeature>
                   <PricingFeature>Email Support</PricingFeature>
-                  <PricingFeature>Resource Education Library Access</PricingFeature>
                 </ul>
                 <Button 
                   className="w-full h-11 font-semibold bg-primary text-primary-foreground hover:bg-primary/90 opacity-60 cursor-not-allowed" 

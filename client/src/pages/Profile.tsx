@@ -6,10 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
+import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import { Loader2, CheckCircle2, ChevronLeft } from "lucide-react";
 import { Link } from "wouter";
 import { addNotification } from "@/components/NotificationDropdown";
+import { getProfile, updateProfile, getAccessToken } from "@/lib/api";
 
 interface ProfileData {
   firstName: string;
@@ -26,6 +29,7 @@ interface ProfileData {
 
 export default function Profile() {
   const { toast } = useToast();
+  const { getPriceId } = useStripePriceIds();
   const [, setLocation] = useLocation();
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState<ProfileData>({
@@ -42,10 +46,36 @@ export default function Profile() {
   });
 
   useEffect(() => {
-    const savedProfile = localStorage.getItem("userProfile");
-    if (savedProfile) {
-      setFormData(JSON.parse(savedProfile));
-    }
+    let cancelled = false;
+    const load = async () => {
+      const savedProfile = localStorage.getItem("userProfile");
+      if (savedProfile) {
+        try {
+          setFormData(JSON.parse(savedProfile));
+        } catch (_) {}
+      }
+      // Sync from navigator (server) so dashboard profile is up to date
+      try {
+        const profile = await getProfile();
+        if (cancelled || !profile) return;
+        const fromApi: ProfileData = {
+          firstName: profile.firstName ?? "",
+          lastName: profile.lastName ?? "",
+          email: profile.email ?? "",
+          phone: profile.phone ?? "",
+          address: profile.address ?? "",
+          city: profile.city ?? "",
+          state: profile.state ?? "",
+          zipCode: profile.zipCode ?? "",
+          ssn: (profile as any).ssn ?? "",
+          vaFileNumber: (profile as any).vaFileNumber ?? "",
+        };
+        setFormData(fromApi);
+        localStorage.setItem("userProfile", JSON.stringify(fromApi));
+      } catch (_) {}
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
 
   const capitalizeFirstLetter = (str: string) => {
@@ -82,22 +112,61 @@ export default function Profile() {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const pendingDeluxePayment = typeof window !== "undefined" ? localStorage.getItem("pendingDeluxePayment") === "true" : false;
+
   const handleSave = async () => {
+    // When Deluxe is pending, require at least first name, last name, and email before saving and sending to Stripe
+    const pendingDeluxe = localStorage.getItem("pendingDeluxePayment") === "true";
+    if (pendingDeluxe) {
+      const first = (formData.firstName || "").trim();
+      const last = (formData.lastName || "").trim();
+      const email = (formData.email || "").trim();
+      if (!first || !last || !email) {
+        toast({
+          title: "Complete required fields",
+          description: "Please enter your first name, last name, and email before continuing to payment.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       // First verify authentication is still valid before saving
-      const authCheck = await fetch("/api/auth/me", { credentials: "include" });
+      const token = getAccessToken();
+      const authCheck = await fetch("/api/auth/me", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: "include",
+      });
       if (!authCheck.ok) {
-        toast({
-          title: "Session Expired",
-          description: "Please log in again to continue.",
-          variant: "destructive",
-        });
-        setLocation("/login");
-        return;
+        // Only show "Session Expired" if user has been logged in for 60+ minutes
+        const loginTime = localStorage.getItem("loginTimestamp");
+        const elapsed = loginTime ? Date.now() - parseInt(loginTime, 10) : Infinity;
+        if (elapsed >= 60 * 60 * 1000) {
+          toast({
+            title: "Session Expired",
+            description: "Please log in again to continue.",
+            variant: "destructive",
+          });
+          setLocation("/login");
+          return;
+        }
+        // Within 60 minutes — don't show session expired, just proceed with save using localStorage
+        console.warn("[PROFILE] Auth check returned non-OK but session is under 60 min, continuing save.");
       }
 
       await new Promise(resolve => setTimeout(resolve, 300));
+      // Save to navigator (server) so profile is stored and dashboard stays in sync
+      await updateProfile({
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        phone: formData.phone,
+        address: formData.address,
+        city: formData.city,
+        state: formData.state,
+        zipCode: formData.zipCode,
+      });
       localStorage.setItem("userProfile", JSON.stringify(formData));
       // Mark personal information as complete for workflow progression
       localStorage.setItem("personalInfoComplete", "true");
@@ -108,62 +177,61 @@ export default function Profile() {
       const pendingDeluxePayment = localStorage.getItem("pendingDeluxePayment");
       
       if (pendingDeluxePayment === "true") {
-        toast({
-          title: "Personal Information Saved",
-          description: "Opening payment page in new tab...",
-        });
-        
-        // Open new window immediately on user gesture to avoid popup blocker
-        const paymentWindow = window.open('about:blank', '_blank');
-        
-        // Redirect to Stripe checkout for Deluxe tier
+        const deluxePriceId = getPriceId("deluxe");
+        if (!deluxePriceId) {
+          toast({
+            title: "Stripe payment not configured",
+            description: "The Deluxe Stripe Price ID is not set. Add STRIPE_PRICE_ID_DELUXE to the server .env file (see STRIPE_SETUP.md). Restart the server after saving.",
+            variant: "destructive",
+          });
+          return;
+        }
         try {
           const response = await fetch("/api/stripe/checkout", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
-            body: JSON.stringify({ 
-              priceId: "price_1StACoBWobRZKfqjXUH6tIQN",
-              tier: "deluxe"
-            })
+            body: JSON.stringify({ priceId: deluxePriceId, tier: "deluxe" })
           });
           
           if (response.status === 401) {
-            // Close the blank window and redirect to signup
-            if (paymentWindow) paymentWindow.close();
+            const loginTs = localStorage.getItem("loginTimestamp");
+            const elapsedMs = loginTs ? Date.now() - parseInt(loginTs, 10) : Infinity;
+            if (elapsedMs >= 60 * 60 * 1000) {
+              toast({
+                title: "Session Expired",
+                description: "Please log in again to continue.",
+                variant: "destructive",
+              });
+              setLocation("/login");
+              return;
+            }
             toast({
-              title: "Session Expired",
-              description: "Please log in again to continue.",
+              title: "Authentication Error",
+              description: "Unable to start checkout. Please try again.",
               variant: "destructive",
             });
-            setLocation("/login");
             return;
           }
           
           const data = await response.json();
-          if (data.url) {
-            // Navigate the pre-opened window to Stripe checkout
-            if (paymentWindow) {
-              paymentWindow.location.href = data.url;
-              toast({
-                title: "Payment Page Opened",
-                description: "Complete your payment in the new tab. This page will wait for you.",
-              });
-            } else {
-              // Fallback if popup was blocked
-              window.location.assign(data.url);
-            }
-            return;
-          } else {
-            if (paymentWindow) paymentWindow.close();
+          const checkoutUrl = typeof data?.url === "string" && data.url.startsWith("https://") ? data.url : null;
+          if (checkoutUrl) {
             toast({
-              title: "Payment Error",
-              description: "Unable to create checkout session. Please try again.",
-              variant: "destructive",
+              title: "Profile saved",
+              description: "Redirecting you to secure payment for Deluxe ($499)...",
             });
+            // Automatically send user to Stripe to pay $499
+            window.location.href = checkoutUrl;
+            return;
           }
+          const errorMessage = data?.message || "Unable to create checkout session. Please try again.";
+          toast({
+            title: "Payment Error",
+            description: errorMessage,
+            variant: "destructive",
+          });
         } catch (error) {
-          if (paymentWindow) paymentWindow.close();
           toast({
             title: "Payment Error",
             description: "Failed to process payment. Please try again.",
@@ -206,6 +274,16 @@ export default function Profile() {
           <h1 className="text-3xl font-serif font-bold text-primary">User Profile</h1>
           <p className="text-lg text-muted-foreground">Manage your personal and contact information.</p>
         </div>
+
+        {pendingDeluxePayment && (
+          <Alert className="border-primary bg-primary/10">
+            <CheckCircle2 className="h-4 w-4 text-primary" />
+            <AlertTitle>Complete your profile, then continue to payment</AlertTitle>
+            <AlertDescription>
+              Fill in all applicable fields below. When you click &quot;Save Personal Information,&quot; your profile will be saved and you will be automatically taken to our linked Stripe payment page to complete your Deluxe purchase ($499).
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Card>
           <CardHeader>
@@ -334,16 +412,21 @@ export default function Profile() {
                   Back
                 </Button>
               </Link>
-              <Button onClick={handleSave} disabled={isSaving} data-testid="button-save-profile">
+              <Button
+                onClick={handleSave}
+                disabled={isSaving}
+                data-testid="button-save-profile"
+                className={pendingDeluxePayment ? "bg-primary text-primary-foreground hover:bg-primary/90" : ""}
+              >
                 {isSaving ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Saving...
+                    {pendingDeluxePayment ? "Saving & redirecting to payment..." : "Saving..."}
                   </>
                 ) : (
                   <>
                     <CheckCircle2 className="mr-2 h-4 w-4" />
-                    Save Personal Information
+                    {pendingDeluxePayment ? "Save Personal Information & continue to payment" : "Save Personal Information"}
                   </>
                 )}
               </Button>

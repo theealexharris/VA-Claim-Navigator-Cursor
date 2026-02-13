@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Bell, Shield, CreditCard, Check, Crown, Eye, EyeOff, Trash2, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import { PROMO_ACTIVE } from "@/hooks/use-subscription";
 import {
   Dialog,
@@ -52,6 +53,7 @@ export default function Settings() {
   const [showDeleteAccountDialog, setShowDeleteAccountDialog] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [personalInfoComplete, setPersonalInfoComplete] = useState(false);
+  const [stripeStatus, setStripeStatus] = useState<{ connected: boolean; webhookConfigured?: boolean; dashboardUrl?: string } | null>(null);
 
   const isAdmin = settings.role === "admin";
   const isPaidTier = settings.subscriptionTier !== "starter" || isAdmin || PROMO_ACTIVE;
@@ -72,6 +74,10 @@ export default function Settings() {
     if (infoComplete === "true") {
       setPersonalInfoComplete(true);
     }
+    fetch("/api/stripe/status", { credentials: "include" })
+      .then((r) => r.json())
+      .then((data) => setStripeStatus(data))
+      .catch(() => setStripeStatus({ connected: false }));
   }, []);
 
   const getTierDisplayName = (tier: string) => {
@@ -135,11 +141,7 @@ export default function Settings() {
   };
 
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-
-  const TIER_PRICE_IDS: Record<string, string> = {
-    pro: "price_1StA6uBWobRZKfqjxgQpF5W6",
-    deluxe: "price_1StACoBWobRZKfqjXUH6tIQN"
-  };
+  const { getPriceId } = useStripePriceIds();
 
   const handleUpgradePlan = async (tier: string, price: string) => {
     const tierKey = tier.toLowerCase();
@@ -159,8 +161,11 @@ export default function Settings() {
       return;
     }
     
-    const priceId = TIER_PRICE_IDS[tierKey];
-    if (!priceId) return;
+    const priceId = getPriceId(tierKey);
+    if (!priceId) {
+      toast({ title: "Payment not configured", description: "This plan is not available for checkout right now. Please try again later.", variant: "destructive" });
+      return;
+    }
 
     setIsProcessingPayment(true);
     try {
@@ -177,13 +182,15 @@ export default function Settings() {
       }
 
       const data = await response.json();
-      if (data.url) {
+      const checkoutUrl = typeof data?.url === "string" && data.url.startsWith("https://") ? data.url : null;
+      if (checkoutUrl) {
         setShowSubscriptionDialog(false);
-        window.open(data.url, '_blank', 'noopener,noreferrer');
+        window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
       } else {
+        const errorMessage = data?.message || "Unable to create checkout session. Please try again.";
         toast({
           title: "Payment Error",
-          description: "Unable to create checkout session. Please try again.",
+          description: errorMessage,
           variant: "destructive",
         });
       }
@@ -272,6 +279,34 @@ export default function Settings() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {stripeStatus && (
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div className="flex items-center gap-2">
+                  <CreditCard className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="font-medium">Stripe account</p>
+                    <p className="text-sm text-muted-foreground">
+                      {stripeStatus.connected
+                        ? "Connected to the Navigator. Payments are processed securely."
+                        : "Not connected. Set STRIPE_PUBLISHABLE_KEY and STRIPE_SECRET_KEY to enable payments."}
+                      {stripeStatus.connected && stripeStatus.webhookConfigured === false && (
+                        <span className="block mt-1 text-amber-600">Add STRIPE_WEBHOOK_SECRET so subscription updates sync automatically.</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                {stripeStatus.connected && stripeStatus.dashboardUrl && (
+                  <a
+                    href={stripeStatus.dashboardUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    Open Stripe Dashboard
+                  </a>
+                )}
+              </div>
+            )}
             <div className="flex flex-col sm:flex-row gap-4">
               <Button variant="outline" onClick={() => setShowSubscriptionDialog(true)}>
                 Manage Subscription

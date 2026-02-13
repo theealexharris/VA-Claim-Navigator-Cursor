@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "wouter";
+import { useToast } from "@/hooks/use-toast";
 import { 
   LayoutDashboard, 
   FileText, 
@@ -50,11 +51,27 @@ export function getWorkflowProgress() {
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
+  const { toast } = useToast();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [userName, setUserName] = useState({ firstName: "", lastName: "" });
   const [workflowProgress, setWorkflowProgress] = useState(getWorkflowProgress());
   
   const [isProfileOpen, setIsProfileOpen] = useState(location.includes('profile') || location.includes('history'));
+
+  // Listen for the global session-expired event fired by AuthProvider after 60 minutes
+  const handleSessionExpired = useCallback(() => {
+    toast({
+      title: "Session Expired",
+      description: "Your session has expired after 60 minutes. Please log in again to continue.",
+      variant: "destructive",
+    });
+    setLocation("/login");
+  }, [toast, setLocation]);
+
+  useEffect(() => {
+    window.addEventListener("sessionExpired", handleSessionExpired);
+    return () => window.removeEventListener("sessionExpired", handleSessionExpired);
+  }, [handleSessionExpired]);
 
   const capitalizeFirstLetter = (str: string) => {
     if (!str) return str;
