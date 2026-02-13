@@ -1110,18 +1110,19 @@ export async function registerRoutes(
 
   app.post("/api/ai/analyze-medical-records", requireInsforgeAuth(), async (req, res) => {
     try {
-      const { fileData, fileType, fileName, extractedText, serverFilePath } = req.body;
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const { fileData, fileType, fileName, extractedText, serverFilePath } = body;
       const fileDataLen = typeof fileData === "string" ? fileData.length : 0;
       console.log("[ANALYZE] Request received:", {
         serverFilePath: serverFilePath || "(none)",
         fileDataLength: fileDataLen,
-        fileType,
-        fileName,
-        hasExtractedText: !!(extractedText && extractedText.trim()),
+        fileType: fileType || "(none)",
+        fileName: fileName || "(none)",
+        hasExtractedText: !!(extractedText && String(extractedText).trim()),
       });
 
       // Primary path: read file from server disk (avoids large base64 payloads)
-      if (serverFilePath) {
+      if (serverFilePath && String(serverFilePath).trim()) {
         const resolvedPath = path.resolve(String(serverFilePath));
         const resolvedTempDir = path.resolve(TEMP_UPLOAD_DIR);
 

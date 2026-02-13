@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { DashboardLayout, getWorkflowProgress } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -65,13 +65,15 @@ interface Condition {
   connectionType: "direct" | "secondary";
   isPresumptive: boolean;
   dailyImpact: string;
+  /** Page number in source document (e.g. "24"); shown as "(Pg. #24)" after condition name */
+  sourcePage?: string;
 }
 
 const steps = [
   { id: 1, title: "Evidence", icon: FileText },
   { id: 2, title: "Conditions", icon: Stethoscope },
   { id: 3, title: "Symptoms & Severity", icon: AlertTriangle },
-  { id: 4, title: "Review & Submit", icon: CheckCircle2 },
+  { id: 4, title: "Review, Print, & Send to VA", icon: CheckCircle2 },
 ];
 
 const symptomOptions = ["Pain", "Discomfort", "Limited function", "Difficulty with daily activities", "Sleep disruption", "Anxiety", "Depression", "Other"];
@@ -123,6 +125,10 @@ export default function ClaimBuilder() {
   const [showVagueConditionPopup, setShowVagueConditionPopup] = useState(false);
   const [hasShownVaguePopup, setHasShownVaguePopup] = useState(false);
   const [showPrintInstructionsPopup, setShowPrintInstructionsPopup] = useState(false);
+  const [showDocumentPreview, setShowDocumentPreview] = useState(false);
+  const [documentPreviewIntent, setDocumentPreviewIntent] = useState<"print" | "download" | null>(null);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const printAreaRef = useRef<HTMLDivElement>(null);
   const [isProfileComplete, setIsProfileComplete] = useState(false);
   const [isAnalyzingRecords, setIsAnalyzingRecords] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState("");
@@ -602,6 +608,9 @@ export default function ClaimBuilder() {
             throw new Error("Server did not return an upload URL");
           }
 
+          // Use full URL so upload always hits the correct API (fixes proxy/subpath issues)
+          const uploadFullUrl = uploadURL.startsWith("http") ? uploadURL : `${window.location.origin}${uploadURL.startsWith("/") ? "" : "/"}${uploadURL}`;
+
           // Step 2: Upload file to server (streams to disk, no memory limit issues)
           const token = getAccessToken();
           const uploadHeaders: Record<string, string> = {
@@ -613,7 +622,7 @@ export default function ClaimBuilder() {
 
           let uploadResponse: Response;
           try {
-            uploadResponse = await fetch(uploadURL, {
+            uploadResponse = await fetch(uploadFullUrl, {
               method: "PUT",
               body: file,
               headers: uploadHeaders,
@@ -640,7 +649,7 @@ export default function ClaimBuilder() {
 
           // Step 4: Analyze every uploaded document to auto-populate conditions
           const evidenceItem = allEvidence.find(e => e.id === evidenceId);
-          runMedicalRecordsAnalysis(file, evidenceItem?.type || "Medical Records", uploadData.serverFilePath);
+          runMedicalRecordsAnalysis(file, evidenceItem?.type || "Medical Records", uploadData?.serverFilePath);
           
         } catch (error: any) {
           console.error("Upload error:", error);
@@ -776,7 +785,7 @@ export default function ClaimBuilder() {
       const { diagnoses } = data;
       if (diagnoses && diagnoses.length > 0) {
         ensureClaimStarted();
-        const newConditions: Condition[] = (diagnoses as { conditionName: string; onsetDate?: string; connectionType?: string; isPresumptive?: boolean }[]).map((d) => ({
+        const newConditions: Condition[] = (diagnoses as { conditionName: string; onsetDate?: string; connectionType?: string; isPresumptive?: boolean; pageNumber?: string }[]).map((d) => ({
           id: `cond-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           name: (d.conditionName || "").toUpperCase().trim() || "Condition",
           onsetDate: d.onsetDate || "",
@@ -786,6 +795,7 @@ export default function ClaimBuilder() {
           connectionType: d.connectionType === "secondary" ? "secondary" : "direct",
           isPresumptive: Boolean(d.isPresumptive),
           dailyImpact: "",
+          sourcePage: (d.pageNumber && String(d.pageNumber).trim()) || undefined,
         }));
         setConditions(prev => {
           const next = [...prev, ...newConditions];
@@ -1011,6 +1021,11 @@ export default function ClaimBuilder() {
 
   const activeCondition = conditions[activeConditionIndex];
   const conditionTip = aiTips[activeCondition?.name] || aiTips["default"];
+  /** Display condition name with page reference when found in a document, e.g. "LUMBAR STRAIN (Pg. #24)" */
+  const conditionDisplayName = (c: Condition) => {
+    const base = c?.name?.trim() || "";
+    return base ? (c.sourcePage ? `${base} (Pg. #${c.sourcePage})` : base) : "";
+  };
 
   const allConditionsClicked = conditions.length === 0 || conditions.every((c) => conditionIdsViewed.has(c.id));
   const allConditionsHaveSymptomsFilled =
@@ -1025,15 +1040,8 @@ export default function ClaimBuilder() {
       safeShowUpgradeDialog();
       return;
     }
-    setShowPrintInstructionsPopup(true);
-  };
-
-  const confirmPrint = () => {
-    setShowPrintInstructionsPopup(false);
-    // Small delay to ensure dialog is fully closed before printing
-    setTimeout(() => {
-      window.print();
-    }, 100);
+    setDocumentPreviewIntent("print");
+    setShowDocumentPreview(true);
   };
 
   const handleDownloadPDF = () => {
@@ -1041,7 +1049,38 @@ export default function ClaimBuilder() {
       safeShowUpgradeDialog();
       return;
     }
-    setShowPrintInstructionsPopup(true);
+    setDocumentPreviewIntent("download");
+    setShowDocumentPreview(true);
+  };
+
+  // Capture printable content when preview opens so user can view before printing/downloading
+  useEffect(() => {
+    if (showDocumentPreview && printAreaRef.current) {
+      setPreviewHtml(printAreaRef.current.innerHTML);
+    }
+  }, [showDocumentPreview]);
+
+  const runPrint = () => {
+    setShowDocumentPreview(false);
+    setDocumentPreviewIntent(null);
+    setTimeout(() => window.print(), 150);
+  };
+
+  const runDownloadPDF = () => {
+    setShowDocumentPreview(false);
+    setDocumentPreviewIntent(null);
+    setTimeout(() => {
+      window.print();
+      toast({
+        title: "Save as PDF",
+        description: "In the print dialog, choose 'Save as PDF' or 'Print to PDF' to save the document to your computer or device.",
+      });
+    }, 150);
+  };
+
+  const confirmPrint = () => {
+    setShowPrintInstructionsPopup(false);
+    setTimeout(() => window.print(), 100);
   };
 
   const generateMemorandum = async () => {
@@ -1125,7 +1164,7 @@ export default function ClaimBuilder() {
                 className="rounded-r-none text-base"
                 data-testid={`button-condition-tab-${index}`}
               >
-                {condition.name || `Condition ${index + 1}`}
+                {conditionDisplayName(condition) || `Condition ${index + 1}`}
               </Button>
               {conditions.length > 1 && (
                 <Button
@@ -1149,14 +1188,14 @@ export default function ClaimBuilder() {
             
             {steps.map((step) => {
               const isActive = step.id === currentStep;
-              const isCompleted = step.id < currentStep;
+              const isCompleted = step.id <= currentStep;
               
               return (
                 <div key={step.id} className="flex flex-col items-center gap-2 bg-muted/30 px-2 rounded-lg">
                   <div 
                     className={`
                       w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 z-10
-                      ${isActive ? "bg-primary border-primary text-white shadow-lg scale-110" : 
+                      ${isActive ? "bg-green-600 border-green-600 text-white shadow-lg scale-110" : 
                         isCompleted ? "bg-green-600 border-green-600 text-white" : "bg-white border-gray-300 text-gray-400"}
                     `}
                   >
@@ -1374,7 +1413,7 @@ export default function ClaimBuilder() {
                     {/* Step 3: Symptoms & Severity */}
                     {currentStep === 3 && (
                       <div className="space-y-6">
-                        <h2 className="text-xl font-bold text-primary font-serif">Symptoms & Severity: {activeCondition?.name || "Condition"}</h2>
+                        <h2 className="text-xl font-bold text-primary font-serif">Symptoms & Severity: {activeCondition ? (conditionDisplayName(activeCondition) || "Condition") : "Condition"}</h2>
                         
                         <div className="space-y-4">
                           <Label className="text-base">How often do you experience symptoms?</Label>
@@ -1459,7 +1498,7 @@ export default function ClaimBuilder() {
                           
                           {conditions.map((condition, idx) => (
                             <div key={condition.id} className="border-b pb-4 last:border-0">
-                              <h4 className="font-bold underline text-primary mb-2 text-lg">Condition {idx + 1}: {condition.name || "Not specified"}</h4>
+                              <h4 className="font-bold underline text-primary mb-2 text-lg">Condition {idx + 1}: {conditionDisplayName(condition) || "Not specified"}</h4>
                               <div className="grid grid-cols-2 gap-2 text-base">
                                 <div className="text-muted-foreground">Onset Date:</div>
                                 <div className="font-bold">{condition.onsetDate || "Not specified"}</div>
@@ -1547,6 +1586,8 @@ export default function ClaimBuilder() {
                           </Button>
                         </div>
 
+                        {/* Printable area: memorandum + VA contact (ref used for preview dialog) */}
+                        <div ref={printAreaRef} className="contents">
                         {/* Claim Memorandum - VA Form 21-526 EZ Equivalent */}
                         <div className="border rounded-lg p-6 bg-white print:border-0 print:p-0 print:block print:break-before-page" data-testid="container-claim-memorandum">
                           {generatedMemorandum ? (
@@ -1655,6 +1696,7 @@ export default function ClaimBuilder() {
                             
                             return (
                               <div className="space-y-6 text-base leading-relaxed">
+                                {/* Supplemental Statement: framework, structure & template are memorialized in SUPPLEMENTAL_STATEMENT_TEMPLATE.md */}
                                 {/* Memorandum Header - Exact Format */}
                                 <div className="space-y-1">
                                   <p><span className="font-bold">Date:</span>   {currentDate}</p>
@@ -1683,40 +1725,40 @@ export default function ClaimBuilder() {
                                 {/* Conditions Detail */}
                                 {allNamedConditions.map((condition, idx) => (
                                   <div key={condition.id} className="space-y-3 border-l-4 border-primary/30 pl-4 py-2 mt-6" style={{ textAlign: 'justify' }}>
-                                    <h4 className="font-bold underline text-lg text-primary">Condition {idx + 1}: {condition.name}</h4>
+                                    <h4 className="font-bold underline text-lg text-primary">Condition {idx + 1}: {conditionDisplayName(condition) || condition.name}</h4>
                                     
                                     <div className="space-y-2">
                                       <p>
-                                        <span className="font-bold">Service Connection:</span> This condition {condition.connectionType === "direct" ? "is directly related to my active duty service and began during my time in service" : 
+                                        <span className="underline">Service Connection:</span> This condition {condition.connectionType === "direct" ? "is directly related to my active duty service and began during my time in service" : 
                                         "developed as a secondary condition resulting from my existing service-connected disability"}.
                                         {condition.isPresumptive && " This condition qualifies for presumptive service connection under the PACT Act provisions."}
                                       </p>
                                       
                                       {condition.onsetDate && (
                                         <p>
-                                          <span className="font-bold">Onset:</span> Symptoms first manifested on or around {condition.onsetDate}.
+                                          <span className="underline">Onset:</span> Symptoms first manifested on or around {condition.onsetDate}.
                                         </p>
                                       )}
                                       
                                       <p>
-                                        <span className="font-bold">Frequency:</span> Symptoms occur on a {condition.frequency} basis.
+                                        <span className="underline">Frequency:</span> Symptoms occur on a {condition.frequency} basis.
                                       </p>
                                       
                                       {condition.symptoms.length > 0 && (
                                         <p>
-                                          <span className="font-bold">Current Symptoms:</span> {condition.symptoms.join(", ")}.
+                                          <span className="underline">Current Symptoms:</span> {condition.symptoms.join(", ")}.
                                         </p>
                                       )}
                                       
                                       {condition.dailyImpact && (
                                         <div>
-                                          <p className="font-bold">Functional Impact on Daily Life:</p>
+                                          <p className="underline">Functional Impact on Daily Life:</p>
                                           <p className="mt-1 pl-4 italic">{condition.dailyImpact}</p>
                                         </div>
                                       )}
                                       
                                       <div className="mt-3 space-y-2">
-                                        <p className="font-bold">Legal Framework</p>
+                                        <p className="underline">Legal Framework</p>
                                         <p className="text-sm pl-4" style={{ textAlign: 'justify' }}>
                                           Service connection and compensation for disability are governed by 38 U.S.C. §§ 1110 and 1131 and implementing regulations at 38 CFR Part 3 and Part 4. Under 38 CFR § 3.303(a), service connection may be established by evidence of continuity of symptomatology or by medical nexus. Under 38 CFR § 4.1 and § 4.10, disability ratings are based on the average impairment of earning capacity and the functional effects of the disability. The VA must consider all evidence of record and resolve reasonable doubt in the veteran’s favor under 38 U.S.C. § 5107(b).
                                         </p>
@@ -1848,6 +1890,7 @@ export default function ClaimBuilder() {
                               <p className="mt-4"><span className="font-bold">Fax Number:</span> 844-531-7818</p>
                             </div>
                           </div>
+                        </div>
                         </div>
                       </div>
                     )}
@@ -2311,7 +2354,7 @@ export default function ClaimBuilder() {
             </div>
             <div className="text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-              <p className="text-sm text-muted-foreground mt-2">Deep analysis may take up to 60 seconds</p>
+              <p className="text-sm text-muted-foreground mt-2">May take several minutes given the amount of records/documents submitted. Bear with us as we prepare to assist you in getting your earned benefits.</p>
               <p className="text-xs text-muted-foreground mt-1">Cross-referencing evidence with legal requirements...</p>
             </div>
           </div>
@@ -2428,6 +2471,34 @@ export default function ClaimBuilder() {
           <div className="flex justify-center pt-4">
             <Button onClick={() => setShowConditionsFoundPopup(false)} data-testid="button-conditions-found-ok">
               OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Preview - View before printing or downloading */}
+      <Dialog open={showDocumentPreview} onOpenChange={(open) => { if (!open) { setShowDocumentPreview(false); setDocumentPreviewIntent(null); } }}>
+        <DialogContent className="max-w-5xl max-h-[95vh] flex flex-col border-2 border-primary print:hidden" data-testid="dialog-document-preview">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <FileText className="h-6 w-6" /> Review Your Claim Document
+            </DialogTitle>
+            <DialogDescription>
+              Review the document below. When ready, use Print to print or Download PDF to save to your computer or mobile device.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-auto rounded-lg border bg-white p-6 my-2 text-base" style={{ maxHeight: "70vh" }}>
+            <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end pt-4 border-t">
+            <Button variant="outline" onClick={() => { setShowDocumentPreview(false); setDocumentPreviewIntent(null); }}>
+              Cancel
+            </Button>
+            <Button onClick={runPrint} data-testid="button-preview-print">
+              <Printer className="h-4 w-4 mr-2" /> Print
+            </Button>
+            <Button onClick={runDownloadPDF} data-testid="button-preview-download-pdf">
+              <Download className="h-4 w-4 mr-2" /> Download PDF
             </Button>
           </div>
         </DialogContent>

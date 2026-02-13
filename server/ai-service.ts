@@ -737,6 +737,8 @@ export interface ExtractedDiagnosis {
   sourceDocument: string;
   supportingQuotes: string[];
   category: string;
+  /** Page number in the document where this diagnosis was found (e.g. "24"). Empty if not known. */
+  pageNumber?: string;
 }
 
 const MEDICAL_RECORD_EXTRACTION_PROMPT = `You are a VA claims expert. Analyze the provided military or VA medical record and extract ALL diagnoses, injuries, and conditions that can be documented for a VA disability claim.
@@ -758,6 +760,7 @@ For each diagnosis/condition found:
 7. sourceDocument: Brief source (e.g., "SF 600 dated 03/2019")
 8. supportingQuotes: 1-3 short direct quotes from the record
 9. category: MUSCULOSKELETAL | MENTAL_HEALTH | RESPIRATORY | CARDIOVASCULAR | DIGESTIVE | NEUROLOGICAL | SKIN | AUDITORY | OTHER
+10. pageNumber: Page number in the document where this diagnosis appears (e.g. 24). Use empty string if not known or single-page document.
 
 Use this 38 CFR Part 4 mapping:
 - Spine/back: DC 5237, 5242, 5243 (§ 4.71a)
@@ -775,7 +778,7 @@ Use this 38 CFR Part 4 mapping:
 - Neuropathy/Sciatica: DC 8520, 8526 (§ 4.124a)
 - Dermatitis/Scars: DC 7806, 7800 (§ 4.118)
 
-Return ONLY a valid JSON array of objects with keys: conditionName, diagnosticCode, cfrReference, onsetDate, connectionType, isPresumptive, sourceDocument, supportingQuotes, category. No markdown, no explanation.`;
+Return ONLY a valid JSON array of objects with keys: conditionName, diagnosticCode, cfrReference, onsetDate, connectionType, isPresumptive, sourceDocument, supportingQuotes, category, pageNumber. No markdown, no explanation.`;
 
 /**
  * Analyze military / VA medical records and extract all VA-claimable diagnoses.
@@ -867,12 +870,44 @@ export async function analyzeMedicalRecords(
         // Text-layer PDF — analyze the extracted text directly (fast)
         return analyzeExtractedText(parsed, fileName);
       }
-      console.log(`[ANALYZE] pdf-parse: only ${parsed.length} chars — scanned document, using OCR chunked approach`);
+      console.log(`[ANALYZE] pdf-parse: only ${parsed.length} chars — scanned document, trying single-file OCR then chunked approach`);
     } catch (pdfErr: any) {
-      console.warn(`[ANALYZE] pdf-parse failed (${pdfErr.message}), using OCR chunked approach`);
+      console.warn(`[ANALYZE] pdf-parse failed (${pdfErr.message}), using OCR approach`);
     }
 
-    // 2b. Scanned PDF — split into small page chunks and OCR each one
+    // 2b. For smaller scanned PDFs, try one-shot fileParser (full document) before chunking
+    const sizeMB = bufferToUse.length / (1024 * 1024);
+    if (sizeMB < 12) {
+      try {
+        const oneShotBase64 = `data:application/pdf;base64,${bufferToUse.toString("base64")}`;
+        console.log(`[ANALYZE] Trying one-shot fileParser for ${fileName} (${sizeMB.toFixed(1)}MB)`);
+        const raw = await aiChat(
+          SMART_MODEL,
+          [
+            { role: "system", content: MEDICAL_RECORD_EXTRACTION_PROMPT },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: `Analyze this military or VA medical record (${fileName}) and extract ALL VA-claimable diagnoses, conditions, injuries, and medications.` },
+                { type: "file", file: { filename: fileName, file_data: oneShotBase64 } } as any,
+              ],
+            },
+          ],
+          4096,
+          0.3,
+          { fileParser: { enabled: true, pdf: { engine: "mistral-ocr" } } }
+        );
+        const oneShotDiagnoses = parseDiagnosesFromResponse(raw);
+        if (oneShotDiagnoses.length > 0) {
+          console.log(`[ANALYZE] One-shot fileParser found ${oneShotDiagnoses.length} diagnoses`);
+          return { diagnoses: oneShotDiagnoses, rawAnalysis: raw };
+        }
+      } catch (oneShotErr: any) {
+        console.warn(`[ANALYZE] One-shot fileParser failed (${oneShotErr.message}), falling back to chunked OCR`);
+      }
+    }
+
+    // 2c. Scanned PDF — split into small page chunks and OCR each one
     return analyzeScannedPdfInChunks(bufferToUse, fileName);
   }
 
@@ -985,6 +1020,10 @@ async function analyzeScannedPdfInChunks(
       rawParts.push(`--- ${label} ---\n${raw}`);
 
       const chunkDiagnoses = parseDiagnosesFromResponse(raw);
+      const chunkFirstPage = String(startPage + 1);
+      chunkDiagnoses.forEach((d) => {
+        if (!d.pageNumber || !String(d.pageNumber).trim()) d.pageNumber = chunkFirstPage;
+      });
       console.log(`[ANALYZE]   chunk ${i + 1} found ${chunkDiagnoses.length} diagnosis(es): ${chunkDiagnoses.map(d => d.conditionName).join(", ") || "(none)"}`);
       allDiagnoses.push(...chunkDiagnoses);
     } catch (chunkErr: any) {
@@ -1076,5 +1115,6 @@ function mapDiagnosisItem(item: any): ExtractedDiagnosis {
     sourceDocument: String(item.sourceDocument || item.source_document || "").trim(),
     supportingQuotes: Array.isArray(item.supportingQuotes) ? item.supportingQuotes : (Array.isArray(item.supporting_quotes) ? item.supporting_quotes : []),
     category: String(item.category || "OTHER").trim(),
+    pageNumber: String(item.pageNumber ?? item.page_number ?? "").trim() || undefined,
   };
 }
