@@ -741,7 +741,7 @@ export interface ExtractedDiagnosis {
   pageNumber?: string;
 }
 
-const MEDICAL_RECORD_EXTRACTION_PROMPT = `You are a VA claims expert. Analyze the provided military or VA medical record and extract ALL diagnoses, injuries, and conditions that can be documented for a VA disability claim.
+const MEDICAL_RECORD_EXTRACTION_PROMPT = `You are a VA claims expert. Scan, review, and analyze the provided military or VA medical record and extract ALL medical conditions, injuries, diagnoses, and diseases that can be documented for a VA disability claim.
 
 PHASE 1 - DOCUMENT CLASSIFICATION:
 Identify the record type (e.g., SF 600, DD 2766, DD 214, Radiology Report, Operative Report, Mental Health Record, C&P Exam, etc.).
@@ -750,7 +750,7 @@ PHASE 2 - EXTRACTION:
 From the record extract: dates of encounter, facility/provider, chief complaint, chronic problems list, active medications (infer conditions from meds: e.g., Albuterol→Asthma, SSRIs→Depression, Omeprazole→GERD, CPAP→Sleep Apnea), procedures, HPI, ROS positives, physical exam abnormals, Assessment/Plan diagnoses, diagnostic results, duty restrictions (LIMDU, profiles), mental health screening results.
 
 PHASE 3 - DIAGNOSIS LIST:
-For each diagnosis/condition found:
+For each diagnosis, condition, injury, or disease found:
 1. conditionName: Standard medical name (e.g., LUMBAR DEGENERATIVE DISC DISEASE, PTSD, SLEEP APNEA)
 2. diagnosticCode: Map to 38 CFR Part 4 DC (e.g., DC 5243, DC 9411, DC 6847)
 3. cfrReference: e.g., "38 CFR § 4.71a"
@@ -836,8 +836,8 @@ export async function analyzeMedicalRecords(
         { role: "system", content: MEDICAL_RECORD_EXTRACTION_PROMPT },
         {
           role: "user",
-          content: [
-            { type: "text", text: `Analyze this medical record image (${fileName}) and extract ALL VA-claimable diagnoses, conditions, medications, and injuries.` },
+            content: [
+            { type: "text", text: `Scan, review, and analyze this medical record image (${fileName}) and extract ALL medical conditions, injuries, diagnoses, diseases, and medications.` },
             { type: "image_url", image_url: { url: base64Img } },
           ] as any,
         },
@@ -888,7 +888,7 @@ export async function analyzeMedicalRecords(
             {
               role: "user",
               content: [
-                { type: "text", text: `Analyze this military or VA medical record (${fileName}) and extract ALL VA-claimable diagnoses, conditions, injuries, and medications.` },
+                { type: "text", text: `Scan, review, and analyze this military or VA medical record (${fileName}) and extract ALL medical conditions, injuries, diagnoses, diseases, and medications.` },
                 { type: "file", file: { filename: fileName, file_data: oneShotBase64 } } as any,
               ],
             },
@@ -1004,7 +1004,7 @@ async function analyzeScannedPdfInChunks(
           content: [
             {
               type: "text",
-              text: `Analyze this section of a military medical record (${fileName}, ${label}). Extract ALL VA-claimable diagnoses, conditions, injuries, medications, and abnormal findings from these pages.`,
+              text: `Scan, review, and analyze this section of a military medical record (${fileName}, ${label}). Extract ALL medical conditions, injuries, diagnoses, diseases, medications, and abnormal findings from these pages.`,
             },
             {
               type: "file",
@@ -1061,7 +1061,7 @@ async function analyzeExtractedText(
     { role: "system", content: MEDICAL_RECORD_EXTRACTION_PROMPT },
     {
       role: "user",
-      content: `Document: ${fileName}${wasTruncated ? ` (first ${Math.ceil(MAX_TEXT_CHARS / 3000)} of ~${Math.ceil(text.length / 3000)} pages shown)` : ""}\n\nExtract ALL VA-claimable diagnoses from this medical record. Look for every diagnosis, medication (infer conditions from meds), abnormal finding, injury, limitation, and mental health note:\n\n${textForAI}`,
+      content: `Document: ${fileName}${wasTruncated ? ` (first ${Math.ceil(MAX_TEXT_CHARS / 3000)} of ~${Math.ceil(text.length / 3000)} pages shown)` : ""}\n\nScan, review, and extract ALL medical conditions, injuries, diagnoses, and diseases from this medical record. Look for every diagnosis, disease, medication (infer conditions from meds), abnormal finding, injury, limitation, and mental health note:\n\n${textForAI}`,
     },
   ], 4096, 0.3);
 

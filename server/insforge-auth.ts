@@ -56,6 +56,26 @@ export async function getInsforgeSession(req: Request): Promise<InsforgeSession 
 }
 
 /**
+ * Middleware that optionally attaches session if present; never rejects.
+ * Use for endpoints that work with or without auth (e.g. Evidence uploads, AI analysis).
+ */
+export function optionalInsforgeAuth() {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const session = await getInsforgeSession(req);
+      if (session) {
+        (req as any).insforgeSession = session;
+        (req as any).user = session.user;
+      }
+      next();
+    } catch (error: any) {
+      console.error('[AUTH] Error in optionalInsforgeAuth:', error.message);
+      next();
+    }
+  };
+}
+
+/**
  * Middleware to require authentication
  */
 export function requireInsforgeAuth() {
@@ -64,7 +84,7 @@ export function requireInsforgeAuth() {
       const session = await getInsforgeSession(req);
       
       if (!session) {
-        return res.status(401).json({ message: 'Unauthorized' });
+        return res.status(401).json({ message: 'Unauthorized. Please sign in again.' });
       }
 
       // Attach session to request for use in route handlers

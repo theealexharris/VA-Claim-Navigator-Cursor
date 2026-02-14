@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 
 async function getCredentials() {
-  // Use environment variables directly (no Replit connectors)
+  // Use environment variables directly
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
   const secretKey = process.env.STRIPE_SECRET_KEY;
 

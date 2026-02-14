@@ -59,11 +59,12 @@ export async function authFetch(
     headers,
     credentials: "include",
   });
-  
-  // Clear token on 401
+
+  // On 401: clear token and notify app so user can re-login without losing claim/evidence data
   if (response.status === 401) {
     removeAccessToken();
+    window.dispatchEvent(new CustomEvent("authRequired", { detail: { from: url } }));
   }
-  
+
   return response;
 }

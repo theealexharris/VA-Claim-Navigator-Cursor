@@ -47,6 +47,8 @@ A comprehensive platform designed to empower veterans in filing VA disability cl
 
    The application will be available at `http://localhost:5000`
 
+   **If the browser won't connect or the app keeps crashing**, see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for causes and fixes (port in use, startup errors, white screen).
+
 ## 🏗️ Architecture
 
 ### Frontend
@@ -145,17 +147,16 @@ See `.env.example` for required environment variables.
 
 ## 📚 Documentation
 
-- `MIGRATION_COMPLETE.md` - Complete migration summary
-- `MIGRATION_TO_INSFORGE.md` - Detailed migration guide
-- `INSFORGE_SETUP.md` - Quick setup guide
-- `DEPRECATED_REPLIT.md` - Notes about deprecated Replit code
+- `NEXT_STEPS.md` - Setup & testing checklist
+- `TROUBLESHOOTING.md` - Browser / connection issue guide
+- `DEV-SERVER.md` - Development server notes
 
 ## 🔄 Migration Status
 
-✅ **Migration Complete** - Successfully migrated from Replit to Insforge:
-- ✅ Authentication (Passport.js → Insforge Auth)
-- ✅ Database (Drizzle ORM → Insforge Database SDK)
-- ✅ Storage (Replit Object Storage → Insforge Storage SDK)
+✅ **Migration Complete** - Backend fully running on Insforge:
+- ✅ Authentication (Insforge Auth)
+- ✅ Database (Insforge Database SDK)
+- ✅ Storage (Insforge Storage SDK)
 - ✅ All routes updated
 - ✅ Frontend updated for token-based auth
 - ✅ Database schema created in Insforge

@@ -5,8 +5,10 @@
   "license": "MIT",
   "scripts": {
     "dev:client": "vite dev --port 5000",
-    "predev": "npx kill-port 5000 || echo .",
+    "predev": "npx kill-port 5000 2>nul || echo . && node -e \"require('timers').setTimeout(()=>process.exit(0),1500)\"",
     "dev": "cross-env NODE_ENV=development nodemon --watch server --ext ts,js,json --delay 2 --signal SIGTERM --exec \"tsx server/index.ts\"",
+    "dev:safe": "npx kill-port 5000 && cross-env NODE_ENV=development tsx server/index.ts",
+    "dev:fresh": "npx kill-port 5000 2>nul || echo . && node -e \"require('timers').setTimeout(()=>process.exit(0),3000)\" && npm run dev",
     "build": "tsx script/build.ts",
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",

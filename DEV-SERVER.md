@@ -38,7 +38,7 @@ There were two bugs:
    If `http://localhost:5000` fails, try `http://127.0.0.1:5000` (or the reverse). On some setups only one works.
 
 3. **Check port 5000**  
-   - Ensure nothing else is using port 5000 (e.g. another Node process, Replit, or another app).  
+   - Ensure nothing else is using port 5000 (e.g. another Node process or another app).  
    - On Windows: `netstat -ano | findstr :5000`  
    - Kill the process using 5000 if needed, then run `npm run dev` again.
 

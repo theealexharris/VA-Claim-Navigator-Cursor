@@ -6,6 +6,7 @@ import {
   signInUser, 
   signOutUser,
   requireInsforgeAuth,
+  optionalInsforgeAuth,
   getInsforgeSession 
 } from "./insforge-auth";
 import { insforgeStorage } from "./insforge-storage";
@@ -1108,7 +1109,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/ai/analyze-medical-records", requireInsforgeAuth(), async (req, res) => {
+  app.post("/api/ai/analyze-medical-records", optionalInsforgeAuth(), async (req, res) => {
     try {
       const body = req.body && typeof req.body === "object" ? req.body : {};
       const { fileData, fileType, fileName, extractedText, serverFilePath } = body;
@@ -1384,7 +1385,7 @@ export async function registerRoutes(
   });
 
   // File upload routes using Insforge storage
-  app.post("/api/uploads/request-url", requireInsforgeAuth(), async (req, res) => {
+  app.post("/api/uploads/request-url", optionalInsforgeAuth(), async (req, res) => {
     try {
       const { name, size, contentType } = req.body;
       

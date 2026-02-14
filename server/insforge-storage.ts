@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 
 /**
  * Insforge Storage Service
- * Replaces Replit object storage with Insforge storage SDK
+ * Insforge storage SDK for file uploads and retrieval
  */
 export class InsforgeStorageService {
   private bucketName: string;

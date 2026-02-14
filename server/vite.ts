@@ -17,9 +17,14 @@ const serverDir =
 const clientIndexPath = path.resolve(serverDir, "..", "client", "index.html");
 
 export async function setupVite(server: Server, app: Express) {
+  const port = parseInt(process.env.PORT || "5000", 10);
   const serverOptions = {
     middlewareMode: true,
-    hmr: { server, path: "/vite-hmr" },
+    hmr: {
+      server,
+      path: "/vite-hmr",
+      clientPort: port,
+    },
     allowedHosts: true as const,
   };
 
@@ -29,6 +34,11 @@ export async function setupVite(server: Server, app: Express) {
     customLogger: {
       ...viteLogger,
       error: (msg, options) => {
+        // Don't let Vite HMR / transform errors crash the server
+        if (msg.includes("WebSocket") || msg.includes("HMR")) {
+          console.warn("[Vite HMR]", msg);
+          return;
+        }
         viteLogger.error(msg, options);
       },
     },

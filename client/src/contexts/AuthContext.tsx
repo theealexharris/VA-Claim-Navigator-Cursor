@@ -47,23 +47,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSessionTimer]);
 
   function handleSessionExpired() {
-    // Clear token and user state
     removeAccessToken();
     setUser(null);
-    // Clear user data
+    // Clear user data but preserve claim builder and evidence so re-login restores Evidence for Claims and AI can re-analyze
     const keysToRemove = [
       "userProfile", "serviceHistory", "medicalConditions",
-      "claimBuilderConditions", "claimBuilderEvidence", "generatedMemorandum",
       "layStatements", "buddyStatements", "serviceConnectedPercentage",
       "personalInfoComplete", "serviceHistoryComplete", "medicalConditionsComplete",
       "previousClaimEnded", "showOnboarding", "selectedTier",
       "pendingDeluxePayment", "paymentComplete", "loginTimestamp"
     ];
     keysToRemove.forEach(key => localStorage.removeItem(key));
+    // Keep claimBuilderConditions, claimBuilderEvidence, generatedMemorandum so uploads and claim progress persist
 
-    // Dispatch custom event so any page can listen for session expiry
     window.dispatchEvent(new CustomEvent("sessionExpired"));
   }
+
+  // When a 401 occurs (e.g. from analysis/upload), clear session but preserve claim builder data so re-login restores evidence
+  useEffect(() => {
+    const onAuthRequired = () => {
+      clearSessionTimer();
+      removeAccessToken();
+      setUser(null);
+      // Do NOT clear claimBuilderEvidence, claimBuilderConditions, generatedMemorandum so Evidence for Claims and claim stay intact
+      window.dispatchEvent(new CustomEvent("sessionExpired", { detail: { soft: true } }));
+    };
+    window.addEventListener("authRequired", onAuthRequired);
+    return () => window.removeEventListener("authRequired", onAuthRequired);
+  }, [clearSessionTimer]);
 
   useEffect(() => {
     checkAuth();

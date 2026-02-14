@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { CONTACT_EMAIL_ADMIN } from "@/lib/contact";
 import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import heroVideo from "@assets/Claim_navigator_video_1768853413666.mp4";
 import avatar1 from "@assets/stock_images/diverse_professional_43b32cf6.jpg";
@@ -520,7 +521,11 @@ export default function LandingPage() {
               <CardHeader className="text-center pb-2 pt-6">
                 <CardTitle className="text-2xl font-serif text-primary">BUSINESS</CardTitle>
                 <CardDescription className="text-sm">
-                  For all Businesses, Law Firms, VA Organizations, Please Contact us Directly via email.
+                  For all Businesses, Law Firms, VA Organizations, please contact us at{" "}
+                  <a href={`mailto:${CONTACT_EMAIL_ADMIN}`} className="font-medium text-primary underline">
+                    {CONTACT_EMAIL_ADMIN}
+                  </a>
+                  .
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-4">
@@ -537,7 +542,7 @@ export default function LandingPage() {
                   <PricingFeature>Priority Technical Support</PricingFeature>
                   <PricingFeature>Training and Onboarding</PricingFeature>
                 </ul>
-                <a href="mailto:Frontdesk@vaclaimnavigator.com">
+                <a href={`mailto:${CONTACT_EMAIL_ADMIN}`}>
                   <Button 
                     className="w-full h-11 font-semibold bg-secondary text-secondary-foreground hover:bg-secondary/90" 
                     data-testid="button-business"

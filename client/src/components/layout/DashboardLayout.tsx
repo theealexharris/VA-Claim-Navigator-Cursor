@@ -54,9 +54,11 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [userName, setUserName] = useState({ firstName: "", lastName: "" });
+  const [userRole, setUserRole] = useState<string>("user");
   const [workflowProgress, setWorkflowProgress] = useState(getWorkflowProgress());
   
   const [isProfileOpen, setIsProfileOpen] = useState(location.includes('profile') || location.includes('history'));
+  const isAdmin = userRole === "admin";
 
   // Listen for the global session-expired event fired by AuthProvider after 60 minutes
   const handleSessionExpired = useCallback(() => {
@@ -90,6 +92,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         firstName: capitalizeFirstLetter(profile.firstName || ""), 
         lastName: capitalizeFirstLetter(profile.lastName || "") 
       });
+      setUserRole(profile.role || "user");
     }
     
     refreshWorkflowProgress();
@@ -102,6 +105,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           firstName: capitalizeFirstLetter(profile.firstName || ""), 
           lastName: capitalizeFirstLetter(profile.lastName || "") 
         });
+        setUserRole(profile.role || "user");
       }
       refreshWorkflowProgress();
     };
@@ -173,7 +177,9 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         <NavItem href="/dashboard/coach" icon={Bot} label="Warrior Coach AI" isActive={location === "/dashboard/coach"} />
         <NavItem href="/dashboard/education" icon={BookOpen} label="Education Library" isActive={location === "/dashboard/education"} />
         <NavItem href="/dashboard/referrals" icon={Gift} label="Refer a Veteran" isActive={location === "/dashboard/referrals"} />
-        <NavItem href="/dashboard/funnel-contacts" icon={Users} label="Funnel Contacts" isActive={location === "/dashboard/funnel-contacts"} />
+        {isAdmin && (
+          <NavItem href="/dashboard/funnel-contacts" icon={Users} label="Funnel Contacts" isActive={location === "/dashboard/funnel-contacts"} />
+        )}
         <NavItem href="/dashboard/settings" icon={Settings} label="Settings" isActive={location === "/dashboard/settings"} />
         <ContactUsDialog 
           trigger={

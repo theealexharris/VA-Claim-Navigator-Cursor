@@ -50,9 +50,12 @@ interface Evidence {
   fileName?: string;
   fileData?: string;  // Deprecated - kept for backwards compatibility
   objectPath?: string;  // Cloud storage path for uploaded files
+  serverFilePath?: string; // Temp server path used for immediate AI analysis
   fileType?: string;
   status: "pending" | "uploaded";
   printEnabled?: boolean;
+  analysisStatus?: "pending" | "processing" | "complete" | "failed";
+  analysisError?: string;
 }
 
 interface Condition {
@@ -340,7 +343,10 @@ export default function ClaimBuilder() {
         .map((e: Evidence) => ({
           ...e,
           // Default printEnabled to true for uploaded evidence if not explicitly set
-          printEnabled: e.printEnabled !== undefined ? e.printEnabled : (e.status === "uploaded" ? true : false)
+          printEnabled: e.printEnabled !== undefined ? e.printEnabled : (e.status === "uploaded" ? true : false),
+          // Keep track of analysis lifecycle per uploaded document
+          analysisStatus: e.analysisStatus ?? (e.status === "uploaded" ? "pending" : undefined),
+          analysisError: e.analysisError ?? undefined,
         }));
       setAllEvidence(filtered);
       // Update storage with filtered/migrated list
@@ -597,9 +603,7 @@ export default function ClaimBuilder() {
           if (!urlResponse.ok) {
             const errData = await urlResponse.text();
             console.error("Failed to get upload URL:", urlResponse.status, errData);
-            throw new Error(urlResponse.status === 401
-              ? "Session expired. Please sign in again."
-              : "Server could not prepare the upload. Please try again.");
+            throw new Error("Server could not prepare the upload. Please try again.");
           }
 
           const { uploadURL, objectPath } = await urlResponse.json();
@@ -635,9 +639,7 @@ export default function ClaimBuilder() {
           if (!uploadResponse.ok) {
             const errText = await uploadResponse.text();
             console.error("Upload failed:", uploadResponse.status, errText);
-            throw new Error(uploadResponse.status === 401
-              ? "Session expired. Please sign in again."
-              : uploadResponse.status === 413
+            throw new Error(uploadResponse.status === 413
               ? "File is too large for the server. Please try a smaller file."
               : `Upload failed (${uploadResponse.status}). Please try again.`);
           }
@@ -645,16 +647,16 @@ export default function ClaimBuilder() {
           const uploadData = await uploadResponse.json();
           
           // Step 3: Update evidence record
-          handleFileUpload(evidenceId, file.name, undefined, file.type, objectPath);
+          handleFileUpload(evidenceId, file.name, undefined, file.type, objectPath, uploadData?.serverFilePath);
 
           // Step 4: Analyze every uploaded document to auto-populate conditions
           const evidenceItem = allEvidence.find(e => e.id === evidenceId);
-          runMedicalRecordsAnalysis(file, evidenceItem?.type || "Medical Records", uploadData?.serverFilePath);
+          runMedicalRecordsAnalysis(evidenceId, file, evidenceItem?.type || "Medical Records", uploadData?.serverFilePath);
           
         } catch (error: any) {
           console.error("Upload error:", error);
           toast({ 
-            title: "Upload Failed", 
+            title: "Upload Failed",
             description: error?.message || "Could not upload file. Please try again.", 
             variant: "destructive" 
           });
@@ -673,10 +675,33 @@ export default function ClaimBuilder() {
     }
   };
 
+  const retryEvidenceAnalysis = (evidence: Evidence) => {
+    if (evidence.status !== "uploaded") return;
+    runMedicalRecordsAnalysis(
+      evidence.id,
+      null,
+      evidence.type || "Medical Records",
+      evidence.serverFilePath,
+      evidence.fileName,
+      evidence.fileType
+    );
+  };
+
   const deleteEvidence = (evidenceId: string) => {
     const updatedEvidence = allEvidence.map(e => 
       e.id === evidenceId 
-        ? { ...e, fileName: undefined, fileData: undefined, fileType: undefined, objectPath: undefined, status: "pending" as const, printEnabled: false }
+        ? {
+            ...e,
+            fileName: undefined,
+            fileData: undefined,
+            fileType: undefined,
+            objectPath: undefined,
+            serverFilePath: undefined,
+            status: "pending" as const,
+            printEnabled: false,
+            analysisStatus: undefined,
+            analysisError: undefined,
+          }
         : e
     );
     saveEvidence(updatedEvidence);
@@ -722,28 +747,69 @@ export default function ClaimBuilder() {
     return branchNames[branch] || "United States Military";
   };
 
-  const handleFileUpload = (evidenceId: string, fileName: string, fileData?: string, fileType?: string, objectPath?: string) => {
+  const setEvidenceAnalysisState = (
+    evidenceId: string,
+    analysisStatus: "pending" | "processing" | "complete" | "failed",
+    analysisError?: string,
+  ) => {
+    const updatedEvidence = allEvidence.map(e =>
+      e.id === evidenceId ? { ...e, analysisStatus, analysisError } : e
+    );
+    saveEvidence(updatedEvidence);
+  };
+
+  const handleFileUpload = (
+    evidenceId: string,
+    fileName: string,
+    fileData?: string,
+    fileType?: string,
+    objectPath?: string,
+    serverFilePath?: string
+  ) => {
     const updatedEvidence = allEvidence.map(e => 
-      e.id === evidenceId ? { ...e, fileName, fileData, fileType, objectPath, status: "uploaded" as const, printEnabled: true } : e
+      e.id === evidenceId
+        ? {
+            ...e,
+            fileName,
+            fileData,
+            fileType,
+            objectPath,
+            serverFilePath,
+            status: "uploaded" as const,
+            printEnabled: true,
+            analysisStatus: "pending" as const,
+            analysisError: undefined,
+          }
+        : e
     );
     saveEvidence(updatedEvidence);
     toast({ title: "Document Uploaded", description: `${fileName} has been added.` });
   };
 
-  const runMedicalRecordsAnalysis = async (file: File, evidenceType: string, serverFilePath?: string) => {
+  const runMedicalRecordsAnalysis = async (
+    evidenceId: string,
+    file: File | null,
+    evidenceType: string,
+    serverFilePath?: string,
+    fallbackFileName?: string,
+    fallbackFileType?: string
+  ) => {
+    const { authFetch } = await import("../lib/api-helpers");
+    setEvidenceAnalysisState(evidenceId, "processing");
     setIsAnalyzingRecords(true);
-    setAnalysisProgress("Analyzing medical records for diagnoses...");
+    setAnalysisProgress(`Analyzing ${evidenceType || "medical records"} for diagnoses...`);
     try {
-      const { authFetch } = await import("../lib/api-helpers");
-
       // Send serverFilePath so the server reads the file from disk (no base64 needed)
       const requestBody: Record<string, string> = {
-        fileType: file.type || "application/octet-stream",
-        fileName: file.name,
+        fileType: file?.type || fallbackFileType || "application/octet-stream",
+        fileName: file?.name || fallbackFileName || "document",
       };
       if (serverFilePath) {
         requestBody.serverFilePath = serverFilePath;
       } else {
+        if (!file) {
+          throw new Error("Please re-upload the file so it can be analyzed.");
+        }
         // Fallback for small files: read as base64 (only if server path unavailable)
         setAnalysisProgress("Reading document...");
         const base64 = await new Promise<string>((resolve, reject) => {
@@ -760,11 +826,28 @@ export default function ClaimBuilder() {
         setAnalysisProgress("Analyzing medical records for diagnoses...");
       }
 
-      const res = await authFetch("/api/ai/analyze-medical-records", {
-        method: "POST",
-        body: JSON.stringify(requestBody),
-      });
-      const responseText = await res.text();
+      let res: Response | null = null;
+      let responseText = "";
+      let lastTransportError: Error | null = null;
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          res = await authFetch("/api/ai/analyze-medical-records", {
+            method: "POST",
+            body: JSON.stringify(requestBody),
+          });
+          responseText = await res.text();
+          break;
+        } catch (transportErr: any) {
+          lastTransportError = transportErr instanceof Error ? transportErr : new Error(String(transportErr));
+          if (attempt < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 1200 * attempt));
+          }
+        }
+      }
+      if (!res) {
+        throw (lastTransportError || new Error("Analysis request failed"));
+      }
       const isHtml = responseText.trimStart().toLowerCase().startsWith("<!doctype") || responseText.trimStart().toLowerCase().startsWith("<html");
       if (isHtml) {
         throw new Error("The backend server is not responding. Please restart the server and try again.");
@@ -784,6 +867,7 @@ export default function ClaimBuilder() {
       }
       const { diagnoses } = data;
       if (diagnoses && diagnoses.length > 0) {
+        setEvidenceAnalysisState(evidenceId, "complete");
         ensureClaimStarted();
         const newConditions: Condition[] = (diagnoses as { conditionName: string; onsetDate?: string; connectionType?: string; isPresumptive?: boolean; pageNumber?: string }[]).map((d) => ({
           id: `cond-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -810,6 +894,7 @@ export default function ClaimBuilder() {
         setNewConditionsCount(newConditions.length);
         setShowConditionsFoundPopup(true);
       } else {
+        setEvidenceAnalysisState(evidenceId, "complete");
         // Check if the rawAnalysis explains why (e.g. scanned PDF, API error)
         const rawMsg = data?.rawAnalysis || "";
         const isApiError = rawMsg.toLowerCase().includes("credits") || rawMsg.toLowerCase().includes("api key") || rawMsg.toLowerCase().includes("unavailable");
@@ -824,6 +909,7 @@ export default function ClaimBuilder() {
     } catch (err: any) {
       console.error("Medical records analysis error:", err);
       const msg = err?.message || "";
+      setEvidenceAnalysisState(evidenceId, "failed", msg || "Analysis failed");
       const isCredits = msg.toLowerCase().includes("credits") || msg.toLowerCase().includes("api key") || msg.toLowerCase().includes("forbidden");
       toast({
         title: isCredits ? "AI Service Temporarily Unavailable" : "Analysis Unavailable",
@@ -1271,6 +1357,21 @@ export default function ClaimBuilder() {
                                         <FileText className="h-3 w-3" /> {evidence.fileName}
                                       </p>
                                     )}
+                                    {evidence.status === "uploaded" && evidence.analysisStatus === "processing" && (
+                                      <p className="text-xs mt-2 text-blue-700 bg-blue-50 inline-flex px-2 py-0.5 rounded-full">
+                                        Analyzing document...
+                                      </p>
+                                    )}
+                                    {evidence.status === "uploaded" && evidence.analysisStatus === "complete" && (
+                                      <p className="text-xs mt-2 text-green-700 bg-green-50 inline-flex px-2 py-0.5 rounded-full">
+                                        Analysis complete
+                                      </p>
+                                    )}
+                                    {evidence.status === "uploaded" && evidence.analysisStatus === "failed" && (
+                                      <p className="text-xs mt-2 text-red-700 bg-red-50 inline-flex px-2 py-0.5 rounded-full">
+                                        Analysis failed: {evidence.analysisError || "Please retry."}
+                                      </p>
+                                    )}
                                   </div>
                                   <div className="flex flex-col gap-2 items-end">
                                     <div className="flex gap-2">
@@ -1309,6 +1410,15 @@ export default function ClaimBuilder() {
                                       >
                                         <Printer className="h-3 w-3 mr-1" />
                                         {evidence.printEnabled ? "Print Enabled" : "Enable Print"}
+                                      </Button>
+                                    )}
+                                    {evidence.status === "uploaded" && evidence.analysisStatus === "failed" && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => retryEvidenceAnalysis(evidence)}
+                                      >
+                                        Retry Analysis
                                       </Button>
                                     )}
                                   </div>
@@ -1494,11 +1604,11 @@ export default function ClaimBuilder() {
 
                         {/* Claim Summary - Hidden during print (full memorandum prints instead) */}
                         <div className="bg-gray-50 p-6 rounded-lg space-y-4 print:hidden">
-                          <h3 className="font-bold text-primary border-b pb-2 text-xl">VA Disability Claim Summary</h3>
+                          <h3 className="italic text-primary border-b pb-2 text-xl">VA Disability Claim Summary</h3>
                           
                           {conditions.map((condition, idx) => (
                             <div key={condition.id} className="border-b pb-4 last:border-0">
-                              <h4 className="font-bold underline text-primary mb-2 text-lg">Condition {idx + 1}: {conditionDisplayName(condition) || "Not specified"}</h4>
+                              <h4 className="font-bold text-primary mb-2 text-lg">Condition {idx + 1}: {conditionDisplayName(condition) || "Not specified"}</h4>
                               <div className="grid grid-cols-2 gap-2 text-base">
                                 <div className="text-muted-foreground">Onset Date:</div>
                                 <div className="font-bold">{condition.onsetDate || "Not specified"}</div>
@@ -1527,7 +1637,7 @@ export default function ClaimBuilder() {
                         {allEvidence.filter(e => e.status === "uploaded").length > 0 && (
                           <div className="bg-gray-50 p-6 rounded-lg space-y-4 print:hidden">
                             <div className="flex items-center justify-between border-b pb-2">
-                              <h3 className="font-bold text-primary text-xl">Evidence Documents to Print</h3>
+                              <h3 className="italic text-primary text-xl">Evidence Documents to Print</h3>
                               <span className="text-sm text-muted-foreground">
                                 {allEvidence.filter(e => e.status === "uploaded" && e.printEnabled).length} of {allEvidence.filter(e => e.status === "uploaded").length} enabled
                               </span>
@@ -1546,7 +1656,7 @@ export default function ClaimBuilder() {
                                       <FileText className="h-5 w-5" />
                                     </div>
                                     <div>
-                                      <h4 className="font-bold text-base">{evidence.type}</h4>
+                                      <h4 className="italic text-base">{evidence.type}</h4>
                                       <p className="text-sm text-muted-foreground">{evidence.fileName}</p>
                                     </div>
                                   </div>
@@ -1588,21 +1698,37 @@ export default function ClaimBuilder() {
 
                         {/* Printable area: memorandum + VA contact (ref used for preview dialog) */}
                         <div ref={printAreaRef} className="contents">
-                        {/* Claim Memorandum - VA Form 21-526 EZ Equivalent */}
-                        <div className="border rounded-lg p-6 bg-white print:border-0 print:p-0 print:block print:break-before-page" data-testid="container-claim-memorandum">
+                        {/* Claim Memorandum - VA Form 21-526 EZ Equivalent - Arial 11pt, justify, 1.5 line spacing, paragraph indent */}
+                        <div className="border rounded-lg p-6 bg-white print:border-0 print:p-0 print:block print:break-before-page" data-testid="container-claim-memorandum" style={{ fontFamily: 'Arial', fontSize: '11pt' }}>
                           {generatedMemorandum ? (
-                            <div className="space-y-6 text-base leading-relaxed">
+                            <div className="space-y-6 text-base" style={{ lineHeight: 1.5 }}>
                               {/* AI-Generated Content with formatted headings */}
-                              <div className="prose prose-sm max-w-none whitespace-pre-wrap text-justify" data-testid="text-generated-memorandum">
-                                {generatedMemorandum.split('\n').map((line, idx) => {
+                              <div className="prose prose-sm max-w-none whitespace-pre-wrap text-justify" data-testid="text-generated-memorandum" style={{ textAlign: 'justify', lineHeight: 1.5, textIndent: '2em' }}>
+                                {(generatedMemorandum.replace(/\n{2,}/g, '\n')).split('\n').map((line, idx) => {
                                   const trimmedLine = line.trim();
                                   const isConditionHeading = /^CONDITION\s+\d+:\s*.+:$/i.test(trimmedLine);
                                   const isSectionHeading = /^(CURRENT SYMPTOMS AND FUNCTIONAL IMPAIRMENT|SUPPORTING EVIDENCE CITATIONS|APPLICABLE LEGAL FRAMEWORK|CASE LAW PRECEDENTS|REQUESTED RATING AND LEGAL ARGUMENT|CONCLUSION\s*\/?\s*RATIONALE):?$/i.test(trimmedLine);
                                   
-                                  if (isConditionHeading || isSectionHeading) {
+                                  if (isConditionHeading) {
+                                    const condNumMatch = trimmedLine.match(/^CONDITION\s+(\d+):/i);
+                                    const condIndex = condNumMatch ? parseInt(condNumMatch[1], 10) - 1 : -1;
+                                    const sourcePage = condIndex >= 0 && conditions[condIndex]?.sourcePage
+                                      ? ` (Pg. #${conditions[condIndex].sourcePage})`
+                                      : "";
+                                    const displayLine = sourcePage
+                                      ? (trimmedLine.endsWith(":") ? trimmedLine.replace(/:$/, `${sourcePage}:`) : trimmedLine + sourcePage)
+                                      : trimmedLine;
                                     return (
                                       <div key={idx}>
-                                        <span className="font-bold underline">{line}</span>
+                                        <span className="font-bold underline">{displayLine}</span>
+                                        {'\n'}
+                                      </div>
+                                    );
+                                  }
+                                  if (isSectionHeading) {
+                                    return (
+                                      <div key={idx}>
+                                        <span className="italic underline">{line}</span>
                                         {'\n'}
                                       </div>
                                     );
@@ -1614,7 +1740,7 @@ export default function ClaimBuilder() {
                               {/* Supportive Evidence/Exhibits For Claims - New Page (for AI-generated content) */}
                               {allEvidence.filter(e => e.status === "uploaded" && e.printEnabled).length > 0 && (
                                 <div className="mt-8 pt-6 border-t-2 border-primary/30 evidence-print-section print:break-before-page">
-                                  <h3 className="text-xl font-bold uppercase tracking-wide text-center mb-4">Supportive Evidence/Exhibits For Claims</h3>
+                                  <h3 className="text-xl italic uppercase tracking-wide text-center mb-4">Supportive Evidence/Exhibits For Claims</h3>
                                   <p className="text-sm text-muted-foreground mb-6 text-center italic">
                                     (Preponderance of the evidence is that degree of relevant evidence that a reasonable person, considering the record as a whole, would accept as sufficient to find that a contested fact is more likely to be true than untrue).
                                   </p>
@@ -1629,7 +1755,7 @@ export default function ClaimBuilder() {
                                             {idx + 1}
                                           </div>
                                           <div>
-                                            <h4 className="font-bold text-primary text-lg">{evidence.type}</h4>
+                                            <h4 className="italic text-primary text-lg">{evidence.type}</h4>
                                             <p className="text-sm text-muted-foreground">{evidence.description}</p>
                                             {evidence.fileName && (
                                               <p className="text-xs mt-1 flex items-center gap-1">
@@ -1652,26 +1778,26 @@ export default function ClaimBuilder() {
                                       ) : (evidence.objectPath || evidence.fileData) && evidence.fileType === 'application/pdf' ? (
                                         <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50 print:bg-white">
                                           <FileText className="h-16 w-16 mx-auto text-primary mb-4" />
-                                          <p className="font-bold text-lg">{evidence.fileName}</p>
+                                          <p className="italic text-lg">{evidence.fileName}</p>
                                           <p className="text-sm text-muted-foreground mt-2">PDF Document - See attached file</p>
                                         </div>
                                       ) : (evidence.objectPath || evidence.fileData) ? (
                                         <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50 print:bg-white">
                                           <FileText className="h-16 w-16 mx-auto text-primary mb-4" />
-                                          <p className="font-bold text-lg">{evidence.fileName || "Document"}</p>
+                                          <p className="italic text-lg">{evidence.fileName || "Document"}</p>
                                           <p className="text-sm text-muted-foreground mt-2">Document attached</p>
                                         </div>
                                       ) : (
                                         <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50 print:bg-white">
                                           <FileText className="h-16 w-16 mx-auto text-primary mb-4" />
-                                          <p className="font-bold text-lg">{evidence.fileName || "Document"}</p>
+                                          <p className="italic text-lg">{evidence.fileName || "Document"}</p>
                                           <p className="text-sm text-muted-foreground mt-2">Document pending upload</p>
                                         </div>
                                       )}
                                     </div>
                                   ))}
                                   <div className="mt-6 pt-4 border-t text-center text-sm text-muted-foreground print:break-before-avoid">
-                                    <p className="font-bold">End of Claim Package</p>
+                                    <p className="italic">End of Claim Package</p>
                                     <p>Total Evidence Documents: {allEvidence.filter(e => e.status === "uploaded" && e.printEnabled).length}</p>
                                   </div>
                                 </div>
@@ -1695,110 +1821,113 @@ export default function ClaimBuilder() {
                             const allNamedConditions = conditions.filter(c => c.name);
                             
                             return (
-                              <div className="space-y-6 text-base leading-relaxed">
+                              <div className="space-y-6 text-base" style={{ fontFamily: 'Arial', fontSize: '11pt' }}>
                                 {/* Supplemental Statement: framework, structure & template are memorialized in SUPPLEMENTAL_STATEMENT_TEMPLATE.md */}
-                                {/* Memorandum Header - Exact Format */}
-                                <div className="space-y-1">
-                                  <p><span className="font-bold">Date:</span>   {currentDate}</p>
-                                  <p><span className="font-bold">From:</span> Veteran {fullName} (SSN: {ssnFormatted})</p>
-                                  <p><span className="font-bold">To:</span>     Veteran Affairs Claims Intake Center</p>
-                                  <p><span className="font-bold">Subj:</span> <span className="font-bold">Supporting Statement / Documentation For VA Form 21-526EZ Claims</span></p>
+                                {/* Memorandum Header - Exact Format: Date/From/To/Subj aligned with margins, labels bold */}
+                                <div className="space-y-1" style={{ lineHeight: 1.5 }}>
+                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>Date:</span> {currentDate}</p>
+                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>From:</span> Veteran {fullName} (SSN: {ssnFormatted})</p>
+                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>To:</span> Veteran Affairs Claims Intake Center</p>
+                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>Subj:</span> <span className="font-bold">Supporting Statement / Documentation For VA Form 21-526EZ Claims</span></p>
                                   <div className="w-full mt-1 print:w-full" style={{ marginLeft: 0, marginRight: 0, borderTop: '4px solid black', width: '100%' }} />
                                 </div>
                                 
-                                {/* PACT ACT Request - Centered - DO NOT ALTER */}
-                                <p className="text-center font-bold my-4 w-full" style={{ textAlign: 'center' }}>
-                                  Requesting "NEW" claims to be Reviewed &amp; Accepted to include conditions covered under the "PACT ACT:"
-                                </p>
-                                
+                                {/* Body: justify, 1.5 line spacing; title/subtitle lines at margin (no indent); first sentence under each indented */}
+                                <div style={{ textAlign: 'justify', lineHeight: 1.5 }}>
                                 {/* Introduction - Exact Format */}
-                                <div className="space-y-4" style={{ textAlign: 'justify' }}>
-                                  <p className="font-bold">To VA Intake Center,</p>
-                                  <p style={{ textIndent: '2rem' }}>
+                                <div className="space-y-4">
+                                  <p style={{ textIndent: 0, textAlign: 'left' }}>To VA Intake Center,</p>
+                                  <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt' }}>
                                     I {fullName} ({nameCode}), am filing the following statement in connection with my claims for Military Service-Connected benefits per VA Title 38 U.S.C. 1151. I am also submitting additional evidence that supports my claim(s) to be valid, true and associated with of my Active Military Service ({branchName}), as Primary and/or Secondary injuries/illness as a direct result of my Military service and hazardous conditions/exposures. Based on the totality of the circumstances, a service connection to my military service has been established per VA Title 38 U.S.C. 1151.
                                   </p>
-                                  <p>
+                                  <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt' }}>
                                     These conditions should have already been accepted and "presumptively" approved by the VA Executive Administration once discharged from Active Duty. Thus, the VA failed to "service connect" my injuries upon discharge of my Military service which is no fault of mine (the Veteran). I am requesting your office review and approve the following medical conditions:
+                                  </p>
+                                  <p className="text-center" style={{ textAlign: 'center', fontSize: '12pt', color: '#2563eb' }}>
+                                    Requesting "NEW" claims to be Reviewed &amp; Accepted to include conditions covered under the "PACT ACT:"
                                   </p>
                                 </div>
                                 
-                                {/* Conditions Detail */}
+                                {/* Conditions Detail: Main condition line double spaced above/below; titles and subtitles at margin (no indent); first sentence under each indented */}
                                 {allNamedConditions.map((condition, idx) => (
-                                  <div key={condition.id} className="space-y-3 border-l-4 border-primary/30 pl-4 py-2 mt-6" style={{ textAlign: 'justify' }}>
-                                    <h4 className="font-bold underline text-lg text-primary">Condition {idx + 1}: {conditionDisplayName(condition) || condition.name}</h4>
+                                  <div key={condition.id} className="space-y-3" style={{ textAlign: 'justify', marginTop: '2em', marginBottom: '2em' }}>
+                                    <h4 className="font-bold underline text-lg text-primary" style={{ marginBottom: '2em', textIndent: 0 }}>Condition {idx + 1}: {conditionDisplayName(condition) || condition.name}</h4>
                                     
-                                    <div className="space-y-2">
-                                      <p>
-                                        <span className="underline">Service Connection:</span> This condition {condition.connectionType === "direct" ? "is directly related to my active duty service and began during my time in service" : 
+                                    <div className="space-y-2" style={{ fontFamily: 'Arial', fontSize: '11pt' }}>
+                                      <p className="italic underline" style={{ textIndent: 0 }}>Service Connection:</p>
+                                      <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
+                                        This condition {condition.connectionType === "direct" ? "is directly related to my active duty service and began during my time in service" : 
                                         "developed as a secondary condition resulting from my existing service-connected disability"}.
                                         {condition.isPresumptive && " This condition qualifies for presumptive service connection under the PACT Act provisions."}
                                       </p>
                                       
                                       {condition.onsetDate && (
-                                        <p>
-                                          <span className="underline">Onset:</span> Symptoms first manifested on or around {condition.onsetDate}.
-                                        </p>
+                                        <>
+                                          <p className="italic underline" style={{ textIndent: 0 }}>Onset:</p>
+                                          <p style={{ textIndent: '2em', lineHeight: 1.5 }}>Symptoms first manifested on or around {condition.onsetDate}.</p>
+                                        </>
                                       )}
                                       
-                                      <p>
-                                        <span className="underline">Frequency:</span> Symptoms occur on a {condition.frequency} basis.
-                                      </p>
+                                      <p className="italic underline" style={{ textIndent: 0 }}>Frequency:</p>
+                                      <p style={{ textIndent: '2em', lineHeight: 1.5 }}>Symptoms occur on a {condition.frequency} basis.</p>
                                       
                                       {condition.symptoms.length > 0 && (
-                                        <p>
-                                          <span className="underline">Current Symptoms:</span> {condition.symptoms.join(", ")}.
-                                        </p>
+                                        <>
+                                          <p className="italic underline" style={{ textIndent: 0 }}>Current Symptoms:</p>
+                                          <p style={{ textIndent: '2em', lineHeight: 1.5 }}>{condition.symptoms.join(", ")}.</p>
+                                        </>
                                       )}
                                       
                                       {condition.dailyImpact && (
                                         <div>
-                                          <p className="underline">Functional Impact on Daily Life:</p>
-                                          <p className="mt-1 pl-4 italic">{condition.dailyImpact}</p>
+                                          <p className="italic underline" style={{ textIndent: 0 }}>Functional Impact on Daily Life:</p>
+                                          <p className="mt-1 italic" style={{ textIndent: '2em', lineHeight: 1.5 }}>{condition.dailyImpact}</p>
                                         </div>
                                       )}
                                       
-                                      <div className="mt-3 space-y-2">
-                                        <p className="underline">Legal Framework</p>
-                                        <p className="text-sm pl-4" style={{ textAlign: 'justify' }}>
+                                      <div className="mt-2 space-y-1">
+                                        <p className="italic underline" style={{ textIndent: 0 }}>Legal Framework</p>
+                                        <p className="text-sm" style={{ textAlign: 'justify', textIndent: '2em', lineHeight: 1.5 }}>
                                           Service connection and compensation for disability are governed by 38 U.S.C. §§ 1110 and 1131 and implementing regulations at 38 CFR Part 3 and Part 4. Under 38 CFR § 3.303(a), service connection may be established by evidence of continuity of symptomatology or by medical nexus. Under 38 CFR § 4.1 and § 4.10, disability ratings are based on the average impairment of earning capacity and the functional effects of the disability. The VA must consider all evidence of record and resolve reasonable doubt in the veteran’s favor under 38 U.S.C. § 5107(b).
                                         </p>
-                                        <p className="text-sm pl-4" style={{ textAlign: 'justify' }}>
+                                        <p className="text-sm" style={{ textAlign: 'justify', textIndent: '2em', lineHeight: 1.5 }}>
                                           In <em>Buchanan v. Nicholson</em>, 451 F.3d 1334 (Fed. Cir. 2006), the Federal Circuit held that when the evidence is in relative equipoise, the benefit of the doubt must go to the veteran and the claim must be granted. The court reaffirmed that the “at least as likely as not” standard in 38 C.F.R. § 3.102 requires the VA to grant the claim when the evidence for and against service connection is evenly balanced. This standard applies to the evaluation of the conditions set forth in this supporting statement.
                                         </p>
                                       </div>
                                       
-                                      <p className="text-sm text-muted-foreground mt-2">
+                                      <p className="text-sm text-muted-foreground mt-1" style={{ textIndent: '2em', lineHeight: 1.5 }}>
                                         Per 38 CFR § 3.303, § 4.40, § 4.45, and § 4.59, the functional limitations caused by this condition warrant service connection and appropriate rating consideration.
                                       </p>
                                     </div>
                                   </div>
                                 ))}
                                 
-                                {/* Conclusion / Rationale - Exact Format */}
-                                <div className="space-y-4 border-t pt-4 mt-6" style={{ textAlign: 'justify' }}>
-                                  <p className="font-bold underline text-center">Conclusion / Rationale</p>
-                                  <p>
+                                {/* Conclusion / Rationale - Exact Format: title no indent; paragraphs indented; 1.5 line spacing */}
+                                <div className="space-y-2 border-t pt-2 mt-3">
+                                  <p className="italic underline text-center" style={{ textIndent: 0, fontSize: '12pt' }}>Conclusion / Rationale</p>
+                                  <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
                                     The evidence provided has proven that it is at least as likely as not (more likely than not), that my reported and documented medical conditions are directly related to events and/or exposure due to Active Military service. The medical evidence from my service records shows I have injuries and subsequent pain, which were are all direct causes of my active-duty service. All medical issues were present and existed within the first year after being discharged from active duty to present.
                                   </p>
-                                  <p>
+                                  <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
                                     Please accept my formal written statement and evidence as proof of accepted VA claims.
                                   </p>
-                                  <p>
+                                  <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
                                     If there is anything you need or would like to talk to me about, please get in touch with me at {profile.phone || "(XXX) XXX-XXXX"} or via personal email at: {profile.email || "XXXXX@email.com"}.
                                   </p>
                                 </div>
                                 
-                                {/* Signature Block - Exact Format */}
-                                <div className="mt-8 pt-4">
+                                {/* Signature Block - Exact Format: at margin, 1.5 line spacing */}
+                                <div className="mt-8 pt-4" style={{ lineHeight: 1.5 }}>
                                   <p>Respectfully submitted,</p>
                                   <p className="mt-8"></p>
                                   <p className="font-bold">Veteran {firstName} {lastName}</p>
+                                </div>
                                 </div>
 
                                 {/* Supportive Evidence/Exhibits For Claims - New Page */}
                                 {allEvidence.filter(e => e.status === "uploaded" && e.printEnabled).length > 0 && (
                                   <div className="mt-8 pt-6 border-t-2 border-primary/30 evidence-print-section print:break-before-page">
-                                    <h3 className="text-xl font-bold uppercase tracking-wide text-center mb-4">Supportive Evidence/Exhibits For Claims</h3>
+                                    <h3 className="text-xl italic uppercase tracking-wide text-center mb-4">Supportive Evidence/Exhibits For Claims</h3>
                                     <p className="text-sm text-muted-foreground mb-6 text-center italic">
                                       (Preponderance of the evidence is that degree of relevant evidence that a reasonable person, considering the record as a whole, would accept as sufficient to find that a contested fact is more likely to be true than untrue).
                                     </p>
@@ -1813,7 +1942,7 @@ export default function ClaimBuilder() {
                                               {idx + 1}
                                             </div>
                                             <div>
-                                              <h4 className="font-bold text-primary text-lg">{evidence.type}</h4>
+                                              <h4 className="italic text-primary text-lg">{evidence.type}</h4>
                                               <p className="text-sm text-muted-foreground">{evidence.description}</p>
                                               {evidence.fileName && (
                                                 <p className="text-xs mt-1 flex items-center gap-1">
@@ -1836,27 +1965,27 @@ export default function ClaimBuilder() {
                                         ) : (evidence.objectPath || evidence.fileData) && evidence.fileType === 'application/pdf' ? (
                                           <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50 print:bg-white">
                                             <FileText className="h-16 w-16 mx-auto text-primary mb-4" />
-                                            <p className="font-bold text-lg">{evidence.fileName}</p>
+                                            <p className="italic text-lg">{evidence.fileName}</p>
                                             <p className="text-sm text-muted-foreground mt-2">PDF Document - See attached file</p>
                                             <p className="text-xs text-muted-foreground mt-1">This PDF document is included as a separate attachment to this claim package.</p>
                                           </div>
                                         ) : (evidence.objectPath || evidence.fileData) ? (
                                           <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50 print:bg-white">
                                             <FileText className="h-16 w-16 mx-auto text-primary mb-4" />
-                                            <p className="font-bold text-lg">{evidence.fileName || "Document"}</p>
+                                            <p className="italic text-lg">{evidence.fileName || "Document"}</p>
                                             <p className="text-sm text-muted-foreground mt-2">Document attached</p>
                                           </div>
                                         ) : (
                                           <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50 print:bg-white">
                                             <FileText className="h-16 w-16 mx-auto text-primary mb-4" />
-                                            <p className="font-bold text-lg">{evidence.fileName || "Document"}</p>
+                                            <p className="italic text-lg">{evidence.fileName || "Document"}</p>
                                             <p className="text-sm text-muted-foreground mt-2">Document pending upload</p>
                                           </div>
                                         )}
                                       </div>
                                     ))}
                                     <div className="mt-6 pt-4 border-t text-center text-sm text-muted-foreground print:break-before-avoid">
-                                      <p className="font-bold">End of Claim Package</p>
+                                      <p className="italic">End of Claim Package</p>
                                       <p>Total Evidence Documents: {allEvidence.filter(e => e.status === "uploaded" && e.printEnabled).length}</p>
                                     </div>
                                   </div>
@@ -2165,7 +2294,7 @@ export default function ClaimBuilder() {
         </DialogContent>
       </Dialog>
 
-      {/* Evidence step: review/verify popup - must click OK to enable Continue to next step */}
+      {/* Evidence step: review popup - OK to continue or Add/Remove Documents (no forced start over) */}
       <Dialog open={showEvidenceReviewPopup} onOpenChange={setShowEvidenceReviewPopup}>
         <DialogContent className="border-2 border-red-500 sm:max-w-md" data-testid="dialog-evidence-review-popup">
           <DialogHeader>
@@ -2173,10 +2302,17 @@ export default function ClaimBuilder() {
               <AlertTriangle className="h-6 w-6" /> Review Required
             </DialogTitle>
             <DialogDescription className="text-base pt-2 text-left">
-              Every above listed condition needs to be reviewed/verified.
+              Every above listed condition needs to be reviewed/verified. You can add or remove documents before continuing.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex justify-end pt-4">
+          <div className="flex justify-between gap-3 pt-4">
+            <Button
+              variant="outline"
+              onClick={() => setShowEvidenceReviewPopup(false)}
+              data-testid="button-evidence-review-add-remove"
+            >
+              Add / Remove Documents
+            </Button>
             <Button
               onClick={() => {
                 setShowEvidenceReviewPopup(false);
@@ -2184,7 +2320,7 @@ export default function ClaimBuilder() {
               }}
               data-testid="button-evidence-review-ok"
             >
-              OK
+              OK — Continue
             </Button>
           </div>
         </DialogContent>

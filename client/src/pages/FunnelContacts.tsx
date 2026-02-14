@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -38,13 +39,28 @@ interface FunnelContact {
 
 export default function FunnelContacts() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [contacts, setContacts] = useState<FunnelContact[]>([]);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [contactToDelete, setContactToDelete] = useState<string | null>(null);
+  const [isAdminCheckDone, setIsAdminCheckDone] = useState(false);
+
+  // Restrict this page to admin/owner/developer only; redirect others to dashboard
+  useEffect(() => {
+    const savedProfile = localStorage.getItem("userProfile");
+    const role = savedProfile ? (JSON.parse(savedProfile) as { role?: string }).role : "user";
+    const isAdmin = role === "admin";
+    if (!isAdmin) {
+      setLocation("/dashboard");
+      return;
+    }
+    setIsAdminCheckDone(true);
+  }, [setLocation]);
 
   useEffect(() => {
+    if (!isAdminCheckDone) return;
     loadContacts();
-  }, []);
+  }, [isAdminCheckDone]);
 
   const loadContacts = () => {
     const savedContacts = localStorage.getItem("funnelContacts");
@@ -214,6 +230,15 @@ export default function FunnelContacts() {
       description: "Contacts exported to text document (Word compatible)."
     });
   };
+
+  // Don't render content until admin check is done (avoids flash before redirect)
+  if (!isAdminCheckDone) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-6xl mx-auto flex items-center justify-center min-h-[200px]" />
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
