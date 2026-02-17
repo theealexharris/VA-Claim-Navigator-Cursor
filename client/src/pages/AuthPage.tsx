@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Shield, ArrowRight, Loader2, Eye, EyeOff, Mail, KeyRound } from "lucide-react";
+import { ArrowRight, Loader2, Eye, EyeOff, Mail, KeyRound } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { resendVerificationEmail, verifyEmail, setAccessToken } from "@/lib/api";
 
@@ -36,6 +36,14 @@ export default function AuthPage() {
     firstName: "",
     lastName: "",
   });
+  const [authConfigError, setAuthConfigError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${typeof window !== "undefined" ? window.location.origin : ""}/api/auth/status`)
+      .then((r) => r.json())
+      .then((d) => setAuthConfigError(d.error ?? null))
+      .catch(() => setAuthConfigError(null));
+  }, []);
 
   // Sync view when URL changes; set Deluxe pending when user lands on signup with tier=deluxe
   useEffect(() => {
@@ -68,7 +76,7 @@ export default function AuthPage() {
     }
   }, []);
 
-  // After successful login or verification – navigate to the right place
+  // After successful login or signup – full redirect so URL bar shows correct origin (e.g. localhost:5000)
   function navigateAfterAuth() {
     const urlParams = new URLSearchParams(window.location.search);
     const tierParam = urlParams.get("tier");
@@ -76,18 +84,19 @@ export default function AuthPage() {
     const redirectAfterLogin = sessionStorage.getItem("redirectAfterLogin");
     sessionStorage.removeItem("redirectAfterLogin");
 
+    const origin = window.location.origin;
+    let path = "/dashboard";
     if (tierParam === "deluxe" || pendingDeluxe === "true") {
       localStorage.setItem("pendingDeluxePayment", "true");
       localStorage.setItem("selectedTier", "deluxe");
-      setLocation("/dashboard/profile");
+      path = "/dashboard/profile";
     } else if (tierParam === "pro") {
       localStorage.setItem("selectedTier", "pro");
-      setLocation("/dashboard/profile");
+      path = "/dashboard/profile";
     } else if (redirectAfterLogin && redirectAfterLogin.startsWith("/dashboard")) {
-      setLocation(redirectAfterLogin);
-    } else {
-      setLocation("/dashboard");
+      path = redirectAfterLogin;
     }
+    window.location.href = `${origin}${path}`;
   }
 
   // ─── Login submit ───
@@ -296,8 +305,8 @@ export default function AuthPage() {
     <div className="min-h-screen flex items-center justify-center p-4 bg-white">
       <Card className="w-full max-w-md shadow-2xl border-gray-200">
         <CardHeader className="space-y-2 text-center pb-8">
-          <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-2">
-            <Shield className="h-8 w-8 text-primary" />
+          <div className="mx-auto p-1 rounded-full w-fit mb-2">
+            <img src="/favicon.png" alt="VA Claim Navigator" className="h-10 w-10 object-contain mx-auto" />
           </div>
           <CardTitle className="text-2xl font-serif font-bold text-primary">
             {isLogin ? "Welcome Back, Warrior" : "Create Your Account"}
@@ -309,6 +318,12 @@ export default function AuthPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {authConfigError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 mb-4 text-left">
+              <p className="text-sm font-medium text-amber-800">Auth not configured</p>
+              <p className="text-sm text-amber-700 mt-1">{authConfigError}</p>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Login: verification hint after failed sign-in */}
             {isLogin && showLoginVerificationHint && (
@@ -415,13 +430,18 @@ export default function AuthPage() {
             </Button>
           </form>
         </CardContent>
-        <CardFooter className="justify-center border-t pt-6 bg-gray-50/50 rounded-b-xl">
+        <CardFooter className="justify-center border-t pt-6 bg-gray-50/50 rounded-b-xl flex flex-col gap-2">
           <p className="text-sm text-muted-foreground">
             {isLogin ? "Don't have an account? " : "Already have an account? "}
             <Link href={isLogin ? "/signup" : "/login"} className="font-semibold text-primary hover:underline">
               {isLogin ? "Sign up" : "Log in"}
             </Link>
           </p>
+          {typeof window !== "undefined" && window.location.port !== "5000" && (
+            <p className="text-xs text-muted-foreground/80">
+              For local dev, use <a href="http://localhost:5000" className="text-primary underline">http://localhost:5000</a>
+            </p>
+          )}
         </CardFooter>
       </Card>
     </div>

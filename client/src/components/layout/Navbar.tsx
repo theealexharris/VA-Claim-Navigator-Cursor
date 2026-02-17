@@ -1,7 +1,7 @@
-import { Link, useLocation, useRoute } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Shield } from "lucide-react";
+import { Menu } from "lucide-react";
 import { useCallback } from "react";
 
 function scrollToSection(e: React.MouseEvent<HTMLAnchorElement>, sectionId: string) {
@@ -22,7 +22,7 @@ export function Navbar() {
     <nav className="border-b bg-white sticky top-0 z-50">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 font-serif font-bold text-3xl text-primary">
-          <Shield className="h-8 w-8 text-secondary fill-secondary/20" />
+          <img src="/favicon.png" alt="VA Claim Navigator" className="h-8 w-8 object-contain" />
           <span>VA Claim Navigator</span>
         </Link>
 

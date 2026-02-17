@@ -67,23 +67,54 @@ export async function registerRoutes(
     return db;
   }
 
+  // Auth config check – prevents recurring "temporarily unavailable" when Insforge isn't set up
+  function getAuthConfigError(): string | null {
+    const anon = process.env.INSFORGE_ANON_KEY;
+    const base = process.env.INSFORGE_API_BASE_URL;
+    if (!anon || anon.trim() === "" || /your.*anon|placeholder|xxx/i.test(anon)) {
+      return "Auth is not configured. Add INSFORGE_ANON_KEY to your .env file (get it from your Insforge project dashboard).";
+    }
+    if (base && /your-insforge|placeholder/i.test(base)) {
+      return "Auth URL is not configured. Set INSFORGE_API_BASE_URL in .env to your Insforge backend URL.";
+    }
+    return null;
+  }
+
+  app.get("/api/auth/status", (_req, res) => {
+    const err = getAuthConfigError();
+    res.json({ authConfigured: !err, error: err ?? undefined });
+  });
+
   // Auth routes
   app.post("/api/auth/register", async (req, res) => {
     try {
-      // Validate required fields
-      if (!req.body || typeof req.body !== 'object') {
-        return res.status(400).json({ message: "Invalid request body" });
+      const configErr = getAuthConfigError();
+      if (configErr) {
+        console.warn("[REGISTER] Blocked – auth not configured");
+        return res.status(503).json({ message: configErr });
       }
 
-      const { email, password, firstName, lastName } = insertUserSchema.parse(req.body);
-      
-      // Validate email and password exist
-      if (!email || !password) {
-        return res.status(400).json({ message: "Email and password are required" });
+      if (!req.body || typeof req.body !== "object") {
+        return res.status(400).json({ message: "Invalid request body" });
       }
-      
-      const fullName = `${firstName || ''} ${lastName || ''}`.trim() || undefined;
-      
+      const body = req.body as Record<string, unknown>;
+      const email = typeof body.email === "string" ? body.email.trim() : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      const firstName = typeof body.firstName === "string" ? body.firstName.trim() : "";
+      const lastName = typeof body.lastName === "string" ? body.lastName.trim() : "";
+
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+      if (!password) {
+        return res.status(400).json({ message: "Password is required" });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters" });
+      }
+
+      const fullName = `${firstName} ${lastName}`.trim() || undefined;
+
       console.log(`[REGISTER] Attempting registration for: ${email}`);
       
       const result = await registerUser(email, password, fullName);
@@ -154,39 +185,46 @@ export async function registerRoutes(
         accessToken: result.accessToken 
       });
     } catch (error: any) {
-      console.error('[REGISTER] Error:', error.message, error.stack);
-      
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ 
-          message: "Invalid input: " + error.errors.map(e => e.message).join(', '),
-          errors: error.errors 
-        });
+      const errorMessage = String(error?.message || "Registration failed");
+      console.error("[REGISTER] Error:", errorMessage);
+
+      if (errorMessage.toLowerCase().includes("already") || errorMessage.toLowerCase().includes("exists")) {
+        return res.status(409).json({ message: "An account with this email already exists." });
       }
-      
-      // Handle specific Insforge errors
-      const errorMessage = error.message || "Registration failed";
-      
-      // Check for common errors
-      if (errorMessage.toLowerCase().includes('already') || errorMessage.toLowerCase().includes('exists')) {
-        return res.status(409).json({ message: "An account with this email already exists" });
-      }
-      
-      if (errorMessage.toLowerCase().includes('password')) {
+      if (errorMessage.toLowerCase().includes("password")) {
         return res.status(400).json({ message: errorMessage });
       }
-      
+      // Config / key errors – tell user exactly what to fix
+      if (/anon|api key|unauthorized|401|invalid key|invalid api|config/i.test(errorMessage.toLowerCase())) {
+        return res.status(503).json({
+          message: "Auth is not configured correctly. Set INSFORGE_ANON_KEY in .env (from your Insforge dashboard). Restart the dev server after changing .env.",
+        });
+      }
+      // Network/connectivity – include config hint so it's not a dead end
+      if (/network|fetch|econnrefused|timeout|unreachable/i.test(errorMessage.toLowerCase())) {
+        return res.status(503).json({
+          message: "Cannot reach the auth service. Check your internet connection and that INSFORGE_ANON_KEY and INSFORGE_API_BASE_URL in .env are correct. Restart the server after editing .env.",
+        });
+      }
+
       res.status(400).json({ message: errorMessage });
     }
   });
 
   app.post("/api/auth/login", async (req, res) => {
     try {
+      const configErr = getAuthConfigError();
+      if (configErr) {
+        console.warn("[LOGIN] Blocked – auth not configured");
+        return res.status(503).json({ message: configErr });
+      }
+
       const { email, password } = req.body;
-      
+
       if (!email || !password) {
         return res.status(400).json({ message: "Email and password are required" });
       }
-      
+
       console.log(`[LOGIN] Attempting login for: ${email}`);
       
       const result = await signInUser(email, password);
@@ -234,10 +272,19 @@ export async function registerRoutes(
       console.log(`[LOGIN] Success for: ${email}`);
       res.json(payload);
     } catch (error: any) {
-      console.error('[LOGIN] Error:', error.message, '| errorCode:', error.errorCode);
+      const msg = String(error?.message || "");
+      console.error("[LOGIN] Error:", msg, "| errorCode:", error?.errorCode);
       if (!res.headersSent) {
-        // Insforge returns AUTH_UNAUTHORIZED for BOTH bad password AND unverified email.
-        // We can't tell the difference, so return a message that covers both cases.
+        if (/anon|api key|unauthorized|401|invalid key|invalid api|config/i.test(msg.toLowerCase())) {
+          return res.status(503).json({
+            message: "Auth is not configured correctly. Set INSFORGE_ANON_KEY in .env and restart the dev server.",
+          });
+        }
+        if (/network|fetch|econnrefused|timeout/i.test(msg)) {
+          return res.status(503).json({
+            message: "Cannot reach the auth service. Check INSFORGE_ANON_KEY and INSFORGE_API_BASE_URL in .env and restart the server.",
+          });
+        }
         res.status(401).json({
           message: "Invalid email or password. If you recently signed up, make sure you've verified your email first.",
         });
@@ -1387,9 +1434,11 @@ export async function registerRoutes(
   // File upload routes using Insforge storage
   app.post("/api/uploads/request-url", optionalInsforgeAuth(), async (req, res) => {
     try {
-      const { name, size, contentType } = req.body;
-      
+      const { name, size, contentType } = req.body ?? {};
+      console.log("[UPLOAD-URL] Request received:", { name, size, contentType });
+
       if (!name) {
+        console.warn("[UPLOAD-URL] Missing 'name' in body. Body was:", JSON.stringify(req.body));
         return res.status(400).json({
           error: "Missing required field: name",
         });
@@ -1397,17 +1446,20 @@ export async function registerRoutes(
 
       const objectId = randomUUID();
       const storagePath = `uploads/${objectId}/${name}`;
-      
-      // Return uploadURL that points to our file upload endpoint
-      // The frontend will PUT the raw file bytes to this URL
+      const uploadURL = `/api/storage/upload/${storagePath}`;
+      const objectPath = `/objects/${storagePath}`;
+
+      console.log("[UPLOAD-URL] Returning:", { uploadURL, objectPath });
       res.json({
-        uploadURL: `/api/storage/upload/${storagePath}`,
-        objectPath: `/objects/${storagePath}`,
+        uploadURL,
+        objectPath,
         metadata: { name, size, contentType },
       });
     } catch (error: any) {
-      console.error("Error generating upload path:", error);
-      res.status(500).json({ error: "Failed to generate upload path" });
+      console.error("[UPLOAD-URL] Error generating upload path:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to generate upload path" });
+      }
     }
   });
 

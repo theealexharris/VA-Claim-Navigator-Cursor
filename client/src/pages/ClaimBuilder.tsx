@@ -135,6 +135,7 @@ export default function ClaimBuilder() {
   const [isProfileComplete, setIsProfileComplete] = useState(false);
   const [isAnalyzingRecords, setIsAnalyzingRecords] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState("");
+  const [uploadingEvidenceId, setUploadingEvidenceId] = useState<string | null>(null);
   const [showProfileRequiredDialog, setShowProfileRequiredDialog] = useState(false);
   const [showEvidenceWarningPopup, setShowEvidenceWarningPopup] = useState(false);
   const [showConditionsFoundPopup, setShowConditionsFoundPopup] = useState(false);
@@ -568,24 +569,26 @@ export default function ClaimBuilder() {
     input.accept = '.pdf,.doc,.docx,.jpg,.jpeg,.png';
     input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        // Support up to 500MB for upload and analysis of large medical record volumes
-        const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
-        if (file.size > MAX_UPLOAD_BYTES) {
-          toast({ 
-            title: "File Too Large", 
-            description: "Please upload files smaller than 500MB.", 
-            variant: "destructive" 
-          });
-          return;
-        }
+      if (!file) return;
 
-        try {
-          toast({ title: "Uploading...", description: `Uploading ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)}MB)...` });
-          
-          // Step 1: Request upload URL from backend
-          const { authFetch, getAccessToken } = await import("../lib/api-helpers");
-          let urlResponse: Response;
+      const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+      if (file.size > MAX_UPLOAD_BYTES) {
+        toast({ title: "File Too Large", description: "Please upload files smaller than 500MB.", variant: "destructive" });
+        return;
+      }
+
+      setUploadingEvidenceId(evidenceId);
+      try {
+        toast({ title: "Uploading...", description: `Uploading ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)}MB)...` });
+
+        const { authFetch, getAccessToken } = await import("../lib/api-helpers");
+        const maxTries = 3;
+        const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+        // Step 1: Request upload URL (with retry)
+        let urlResponse: Response | null = null;
+        let lastUrlError: Error | null = null;
+        for (let attempt = 1; attempt <= maxTries; attempt++) {
           try {
             urlResponse = await authFetch("/api/uploads/request-url", {
               method: "POST",
@@ -595,72 +598,92 @@ export default function ClaimBuilder() {
                 contentType: file.type || "application/octet-stream",
               }),
             });
-          } catch (netErr: any) {
-            console.error("Network error requesting upload URL:", netErr);
-            throw new Error("Cannot connect to server. Please check your connection and try again.");
-          }
-
-          if (!urlResponse.ok) {
+            if (urlResponse.ok) break;
             const errData = await urlResponse.text();
-            console.error("Failed to get upload URL:", urlResponse.status, errData);
-            throw new Error("Server could not prepare the upload. Please try again.");
-          }
-
-          const { uploadURL, objectPath } = await urlResponse.json();
-
-          if (!uploadURL) {
-            throw new Error("Server did not return an upload URL");
-          }
-
-          // Use full URL so upload always hits the correct API (fixes proxy/subpath issues)
-          const uploadFullUrl = uploadURL.startsWith("http") ? uploadURL : `${window.location.origin}${uploadURL.startsWith("/") ? "" : "/"}${uploadURL}`;
-
-          // Step 2: Upload file to server (streams to disk, no memory limit issues)
-          const token = getAccessToken();
-          const uploadHeaders: Record<string, string> = {
-            "Content-Type": file.type || "application/octet-stream",
-          };
-          if (token) {
-            uploadHeaders["Authorization"] = `Bearer ${token}`;
-          }
-
-          let uploadResponse: Response;
-          try {
-            uploadResponse = await fetch(uploadFullUrl, {
-              method: "PUT",
-              body: file,
-              headers: uploadHeaders,
-            });
+            lastUrlError = new Error(`Server could not prepare the upload (${urlResponse.status}). Please try again.`);
+            console.warn(`[Upload] request-url attempt ${attempt}/${maxTries} failed:`, urlResponse.status, errData);
           } catch (netErr: any) {
-            console.error("Network error during file upload:", netErr);
-            throw new Error("Upload interrupted. The file may be too large for your connection. Please try again.");
+            lastUrlError = new Error("Cannot connect to server. Please check your connection and try again.");
+            console.warn("[Upload] request-url network error:", netErr);
           }
-
-          if (!uploadResponse.ok) {
-            const errText = await uploadResponse.text();
-            console.error("Upload failed:", uploadResponse.status, errText);
-            throw new Error(uploadResponse.status === 413
-              ? "File is too large for the server. Please try a smaller file."
-              : `Upload failed (${uploadResponse.status}). Please try again.`);
-          }
-
-          const uploadData = await uploadResponse.json();
-          
-          // Step 3: Update evidence record
-          handleFileUpload(evidenceId, file.name, undefined, file.type, objectPath, uploadData?.serverFilePath);
-
-          // Step 4: Analyze every uploaded document to auto-populate conditions
-          const evidenceItem = allEvidence.find(e => e.id === evidenceId);
-          runMedicalRecordsAnalysis(evidenceId, file, evidenceItem?.type || "Medical Records", uploadData?.serverFilePath);
-          
-        } catch (error: any) {
-          console.error("Upload error:", error);
-          toast({ 
-            title: "Upload Failed",
-            description: error?.message || "Could not upload file. Please try again.", 
-            variant: "destructive" 
-          });
+          if (attempt < maxTries) await delay(500 * attempt);
         }
+
+        if (!urlResponse?.ok) {
+          throw lastUrlError ?? new Error("Server could not prepare the upload. Please try again.");
+        }
+
+        let urlData: { uploadURL?: string; objectPath?: string };
+        try {
+          const ct = urlResponse.headers.get("content-type") || "";
+          if (!ct.includes("application/json")) {
+            const txt = await urlResponse.text();
+            throw new Error(`Server returned non-JSON (${ct}): ${txt.substring(0, 120)}`);
+          }
+          urlData = await urlResponse.json();
+        } catch (parseErr: any) {
+          throw new Error(`Invalid response from server: ${parseErr.message || "not JSON"}`);
+        }
+        const { uploadURL, objectPath } = urlData;
+        if (!uploadURL) {
+          throw new Error("Server did not return an upload URL. Please try again.");
+        }
+
+        const uploadFullUrl = uploadURL.startsWith("http") ? uploadURL : `${window.location.origin}${uploadURL}`;
+        console.log("[Upload] uploadURL:", uploadURL, "→ uploadFullUrl:", uploadFullUrl);
+        const token = getAccessToken();
+        const uploadHeaders: Record<string, string> = {};
+        if (token) uploadHeaders["Authorization"] = `Bearer ${token}`;
+
+        // Step 2: PUT file (with retry)
+        let uploadResponse: Response | null = null;
+        let lastPutError: Error | null = null;
+        for (let attempt = 1; attempt <= maxTries; attempt++) {
+          try {
+            uploadResponse = await fetch(uploadFullUrl, { method: "PUT", body: file, headers: uploadHeaders });
+            if (uploadResponse.ok) break;
+            const errText = await uploadResponse.text();
+            lastPutError = new Error(
+              uploadResponse.status === 413
+                ? "File is too large for the server. Please try a smaller file."
+                : `Upload failed (${uploadResponse.status}). Please try again.`
+            );
+            console.warn(`[Upload] PUT attempt ${attempt}/${maxTries} failed:`, uploadResponse.status, errText);
+          } catch (netErr: any) {
+            lastPutError = new Error("Upload interrupted. The file may be too large for your connection. Please try again.");
+            console.warn("[Upload] PUT network error:", netErr);
+          }
+          if (attempt < maxTries) await delay(500 * attempt);
+        }
+
+        if (!uploadResponse?.ok) {
+          throw lastPutError ?? new Error("Upload failed. Please try again.");
+        }
+
+        let uploadData: { serverFilePath?: string; objectPath?: string } = {};
+        try {
+          const text = await uploadResponse.text();
+          uploadData = text ? JSON.parse(text) : {};
+        } catch {
+          console.warn("[Upload] Response was not JSON; continuing with local file path.");
+        }
+
+        const serverFilePath = uploadData?.serverFilePath;
+        const resolvedObjectPath = objectPath ?? uploadData?.objectPath ?? `/objects/uploads/${file.name}`;
+
+        handleFileUpload(evidenceId, file.name, undefined, file.type, resolvedObjectPath, serverFilePath);
+
+        const evidenceItem = allEvidence.find((e) => e.id === evidenceId);
+        runMedicalRecordsAnalysis(evidenceId, file, evidenceItem?.type || "Medical Records", serverFilePath);
+      } catch (error: any) {
+        console.error("Upload error:", error);
+        toast({
+          title: "Upload Failed",
+          description: error?.message || "Could not upload file. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setUploadingEvidenceId(null);
       }
     };
     input.click();
@@ -1396,9 +1419,15 @@ export default function ClaimBuilder() {
                                       <Button 
                                         size="sm"
                                         variant={evidence.status === "uploaded" ? "outline" : "default"}
+                                        disabled={uploadingEvidenceId === evidence.id}
                                         onClick={() => handleRealFileUpload(evidence.id)}
                                       >
-                                        <Upload className="h-3 w-3 mr-1" /> {evidence.status === "uploaded" ? "Re-upload" : "Upload"}
+                                        {uploadingEvidenceId === evidence.id ? (
+                                          <Loader2 className="h-3 w-3 mr-1 animate-spin" /> 
+                                        ) : (
+                                          <Upload className="h-3 w-3 mr-1" />
+                                        )}
+                                        {uploadingEvidenceId === evidence.id ? "Uploading…" : (evidence.status === "uploaded" ? "Re-upload" : "Upload")}
                                       </Button>
                                     </div>
                                     {evidence.status === "uploaded" && (
@@ -1701,13 +1730,16 @@ export default function ClaimBuilder() {
                         {/* Claim Memorandum - VA Form 21-526 EZ Equivalent - Arial 11pt, justify, 1.5 line spacing, paragraph indent */}
                         <div className="border rounded-lg p-6 bg-white print:border-0 print:p-0 print:block print:break-before-page" data-testid="container-claim-memorandum" style={{ fontFamily: 'Arial', fontSize: '11pt' }}>
                           {generatedMemorandum ? (
-                            <div className="space-y-6 text-base" style={{ lineHeight: 1.5 }}>
-                              {/* AI-Generated Content with formatted headings */}
-                              <div className="prose prose-sm max-w-none whitespace-pre-wrap text-justify" data-testid="text-generated-memorandum" style={{ textAlign: 'justify', lineHeight: 1.5, textIndent: '2em' }}>
+                            /* ── PROTECTED: AI-generated memo rendering — see SUPPLEMENTAL_STATEMENT_TEMPLATE.md §6 ── */
+                            <div className="space-y-6 text-base" style={{ lineHeight: 1.5, marginLeft: 0, paddingLeft: 0 }}>
+                              {/* AI-Generated Content: headings at far left; paragraphs indented (#1–#9 layout) */}
+                              <div className="prose prose-sm max-w-none whitespace-pre-wrap text-justify" data-testid="text-generated-memorandum" style={{ lineHeight: 1.5 }}>
                                 {(generatedMemorandum.replace(/\n{2,}/g, '\n')).split('\n').map((line, idx) => {
                                   const trimmedLine = line.trim();
                                   const isConditionHeading = /^CONDITION\s+\d+:\s*.+:$/i.test(trimmedLine);
-                                  const isSectionHeading = /^(CURRENT SYMPTOMS AND FUNCTIONAL IMPAIRMENT|SUPPORTING EVIDENCE CITATIONS|APPLICABLE LEGAL FRAMEWORK|CASE LAW PRECEDENTS|REQUESTED RATING AND LEGAL ARGUMENT|CONCLUSION\s*\/?\s*RATIONALE):?$/i.test(trimmedLine);
+                                  const isConclusionHeading = /^CONCLUSION\s*\/?\s*RATIONALE:?$/i.test(trimmedLine);
+                                  const isBoldSectionHeading = /^(CURRENT SYMPTOMS AND FUNCTIONAL IMPAIRMENT|SUPPORTING EVIDENCE CITATIONS):?$/i.test(trimmedLine);
+                                  const isItalicSectionHeading = /^(APPLICABLE LEGAL FRAMEWORK|CASE LAW PRECEDENTS|REQUESTED RATING AND LEGAL ARGUMENT):?$/i.test(trimmedLine);
                                   
                                   if (isConditionHeading) {
                                     const condNumMatch = trimmedLine.match(/^CONDITION\s+(\d+):/i);
@@ -1719,21 +1751,41 @@ export default function ClaimBuilder() {
                                       ? (trimmedLine.endsWith(":") ? trimmedLine.replace(/:$/, `${sourcePage}:`) : trimmedLine + sourcePage)
                                       : trimmedLine;
                                     return (
-                                      <div key={idx}>
+                                      <div key={idx} style={{ textIndent: 0, textAlign: 'left', marginLeft: 0, marginTop: '1.5em', marginBottom: '1.5em', color: '#000' }}>
                                         <span className="font-bold underline">{displayLine}</span>
                                         {'\n'}
                                       </div>
                                     );
                                   }
-                                  if (isSectionHeading) {
+                                  if (isConclusionHeading) {
                                     return (
-                                      <div key={idx}>
-                                        <span className="italic underline">{line}</span>
+                                      <div key={idx} style={{ textIndent: 0, textAlign: 'left', marginLeft: 0, marginTop: '1.5em', marginBottom: '1.5em', color: '#000' }}>
+                                        <span className="font-bold underline">{trimmedLine}</span>
                                         {'\n'}
                                       </div>
                                     );
                                   }
-                                  return <span key={idx}>{line}{'\n'}</span>;
+                                  if (isBoldSectionHeading) {
+                                    return (
+                                      <div key={idx} style={{ textIndent: 0, textAlign: 'left', marginLeft: 0, marginTop: '1.5em', marginBottom: '0.5em' }}>
+                                        <span className="font-bold">{trimmedLine}</span>
+                                        {'\n'}
+                                      </div>
+                                    );
+                                  }
+                                  if (isItalicSectionHeading) {
+                                    return (
+                                      <div key={idx} style={{ textIndent: 0, textAlign: 'left', marginLeft: 0, marginTop: '1.5em', marginBottom: '0.5em' }}>
+                                        <span className="italic underline">{trimmedLine}</span>
+                                        {'\n'}
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <div key={idx} style={{ textIndent: '2em', textAlign: 'justify', marginBottom: '0.5em' }}>
+                                      {line}{'\n'}
+                                    </div>
+                                  );
                                 })}
                               </div>
                               
@@ -1821,41 +1873,51 @@ export default function ClaimBuilder() {
                             const allNamedConditions = conditions.filter(c => c.name);
                             
                             return (
-                              <div className="space-y-6 text-base" style={{ fontFamily: 'Arial', fontSize: '11pt' }}>
+                              {/* ╔══════════════════════════════════════════════════════════════════╗
+                                  ║  PROTECTED SECTION — SUPPLEMENTAL STATEMENT (MEMORIALIZED)      ║
+                                  ║  Finalized: 2026-02-17                                          ║
+                                  ║  Reference: /SUPPLEMENTAL_STATEMENT_TEMPLATE.md                 ║
+                                  ║  DO NOT modify structure, formatting, fonts, colors, spacing,    ║
+                                  ║  or template wording without explicit approval.                  ║
+                                  ╚══════════════════════════════════════════════════════════════════╝ */}
+                              <div className="space-y-6 text-base" style={{ fontFamily: 'Arial', fontSize: '11pt', color: '#000' }}>
                                 {/* Supplemental Statement: framework, structure & template are memorialized in SUPPLEMENTAL_STATEMENT_TEMPLATE.md */}
-                                {/* Memorandum Header - Exact Format: Date/From/To/Subj aligned with margins, labels bold */}
-                                <div className="space-y-1" style={{ lineHeight: 1.5 }}>
-                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>Date:</span> {currentDate}</p>
-                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>From:</span> Veteran {fullName} (SSN: {ssnFormatted})</p>
-                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>To:</span> Veteran Affairs Claims Intake Center</p>
-                                  <p><span className="font-bold" style={{ display: 'inline-block', minWidth: '3.5em' }}>Subj:</span> <span className="font-bold">Supporting Statement / Documentation For VA Form 21-526EZ Claims</span></p>
+                                {/* #1 Memorandum Header - Date/From/To/Subj at far left margin, all headings BOLD, uniform */}
+                                <div style={{ lineHeight: 2, marginLeft: 0, paddingLeft: 0, textAlign: 'left', fontFamily: 'Arial', fontSize: '12pt' }}>
+                                  <p style={{ margin: 0, textIndent: 0 }}><span className="font-bold">Date:</span> {currentDate}</p>
+                                  <p style={{ margin: 0, textIndent: 0 }}><span className="font-bold">From:</span> Veteran {fullName} (SSN: {ssnFormatted})</p>
+                                  <p style={{ margin: 0, textIndent: 0 }}><span className="font-bold">To:</span> Veteran Affairs Claims Intake Center</p>
+                                  <p className="font-bold" style={{ margin: 0, textIndent: 0 }}>Subj: Supporting Statement / Documentation For VA Form 21-526EZ Claims</p>
                                   <div className="w-full mt-1 print:w-full" style={{ marginLeft: 0, marginRight: 0, borderTop: '4px solid black', width: '100%' }} />
                                 </div>
                                 
-                                {/* Body: justify, 1.5 line spacing; title/subtitle lines at margin (no indent); first sentence under each indented */}
-                                <div style={{ textAlign: 'justify', lineHeight: 1.5 }}>
-                                {/* Introduction - Exact Format */}
+                                {/* Body: 11pt Arial throughout; only subtitles in Italic; 1.5 line spacing */}
+                                <div style={{ textAlign: 'justify', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt' }}>
+                                {/* Introduction - prepopulated; #2 paragraph spacing after To VA Intake Center, first paragraph indented */}
+                                {(() => {
+                                  const hasEvidence = allEvidence.some(e => e.status === "uploaded");
+                                  return (
                                 <div className="space-y-4">
-                                  <p style={{ textIndent: 0, textAlign: 'left' }}>To VA Intake Center,</p>
+                                  <p style={{ textIndent: 0, textAlign: 'left', fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1em' }}>To VA Intake Center,</p>
                                   <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt' }}>
-                                    I {fullName} ({nameCode}), am filing the following statement in connection with my claims for Military Service-Connected benefits per VA Title 38 U.S.C. 1151. I am also submitting additional evidence that supports my claim(s) to be valid, true and associated with of my Active Military Service ({branchName}), as Primary and/or Secondary injuries/illness as a direct result of my Military service and hazardous conditions/exposures. Based on the totality of the circumstances, a service connection to my military service has been established per VA Title 38 U.S.C. 1151.
+                                    I {fullName} ({nameCode}), am filing the following statement in connection with my claims for Military Service-Connected benefits per VA Title 38 U.S.C. 1151. {hasEvidence ? "I am also submitting additional evidence that supports my claim(s) to be valid, true and associated with my Active Military Service" : "This statement supports my claim(s) to be valid, true and associated with my Active Military Service"} ({branchName}), as Primary and/or Secondary injuries/illness as a direct result of my Military service and hazardous conditions/exposures. Based on the totality of the circumstances, a service connection to my military service has been established per VA Title 38 U.S.C. 1151.
                                   </p>
                                   <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt' }}>
-                                    These conditions should have already been accepted and "presumptively" approved by the VA Executive Administration once discharged from Active Duty. Thus, the VA failed to "service connect" my injuries upon discharge of my Military service which is no fault of mine (the Veteran). I am requesting your office review and approve the following medical conditions:
-                                  </p>
-                                  <p className="text-center" style={{ textAlign: 'center', fontSize: '12pt', color: '#2563eb' }}>
-                                    Requesting "NEW" claims to be Reviewed &amp; Accepted to include conditions covered under the "PACT ACT:"
+                                    These conditions should have already been accepted and "presumptively" approved by the VA Executive Administration once discharged from Active Duty. Thus, the VA failed to "service connect" my injuries upon discharge of my Military service which is no fault of mine (the Veteran). I am requesting that the following new claims be reviewed and accepted, including conditions covered under the PACT Act:
                                   </p>
                                 </div>
+                                  );
+                                })()}
                                 
-                                {/* Conditions Detail: Main condition line double spaced above/below; titles and subtitles at margin (no indent); first sentence under each indented */}
+                                {/* #3 Paragraph spacing before Condition; Condition 1 at far left margin; first paragraph under condition indented */}
                                 {allNamedConditions.map((condition, idx) => (
-                                  <div key={condition.id} className="space-y-3" style={{ textAlign: 'justify', marginTop: '2em', marginBottom: '2em' }}>
-                                    <h4 className="font-bold underline text-lg text-primary" style={{ marginBottom: '2em', textIndent: 0 }}>Condition {idx + 1}: {conditionDisplayName(condition) || condition.name}</h4>
+                                  <div key={condition.id} style={{ textAlign: 'justify', marginTop: '2em', marginBottom: '2em', marginLeft: 0, paddingLeft: 0 }}>
+                                    <h4 className="font-bold underline text-lg" style={{ marginBottom: '1.5em', textIndent: 0, textAlign: 'left', color: '#000' }}>Condition {idx + 1}: {conditionDisplayName(condition) || condition.name}</h4>
                                     
-                                    <div className="space-y-2" style={{ fontFamily: 'Arial', fontSize: '11pt' }}>
-                                      <p className="italic underline" style={{ textIndent: 0 }}>Service Connection:</p>
-                                      <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
+                                    {/* Subtitles at far-left margin; double spacing between headings/paragraphs */}
+                                    <div style={{ fontFamily: 'Arial', fontSize: '11pt', marginLeft: 0, textAlign: 'left' }}>
+                                      <p className="italic underline" style={{ textIndent: 0, fontSize: '12pt', marginLeft: 0, marginTop: '1.5em', marginBottom: '0.5em' }}>Service Connection:</p>
+                                      <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1.5em' }}>
                                         This condition {condition.connectionType === "direct" ? "is directly related to my active duty service and began during my time in service" : 
                                         "developed as a secondary condition resulting from my existing service-connected disability"}.
                                         {condition.isPresumptive && " This condition qualifies for presumptive service connection under the PACT Act provisions."}
@@ -1863,66 +1925,65 @@ export default function ClaimBuilder() {
                                       
                                       {condition.onsetDate && (
                                         <>
-                                          <p className="italic underline" style={{ textIndent: 0 }}>Onset:</p>
-                                          <p style={{ textIndent: '2em', lineHeight: 1.5 }}>Symptoms first manifested on or around {condition.onsetDate}.</p>
+                                          <p className="italic underline" style={{ textIndent: 0, fontSize: '12pt', marginLeft: 0, marginTop: '1.5em', marginBottom: '0.5em' }}>Onset:</p>
+                                          <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1.5em' }}>Symptoms first manifested on or around {condition.onsetDate}.</p>
                                         </>
                                       )}
                                       
-                                      <p className="italic underline" style={{ textIndent: 0 }}>Frequency:</p>
-                                      <p style={{ textIndent: '2em', lineHeight: 1.5 }}>Symptoms occur on a {condition.frequency} basis.</p>
+                                      <p className="italic underline" style={{ textIndent: 0, fontSize: '12pt', marginLeft: 0, marginTop: '1.5em', marginBottom: '0.5em' }}>Frequency:</p>
+                                      <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1.5em' }}>Symptoms occur on a {condition.frequency} basis.</p>
                                       
                                       {condition.symptoms.length > 0 && (
                                         <>
-                                          <p className="italic underline" style={{ textIndent: 0 }}>Current Symptoms:</p>
-                                          <p style={{ textIndent: '2em', lineHeight: 1.5 }}>{condition.symptoms.join(", ")}.</p>
+                                          <p className="italic underline" style={{ textIndent: 0, fontSize: '12pt', marginLeft: 0, marginTop: '1.5em', marginBottom: '0.5em' }}>Current Symptoms:</p>
+                                          <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1.5em' }}>{condition.symptoms.join(", ")}.</p>
                                         </>
                                       )}
                                       
                                       {condition.dailyImpact && (
                                         <div>
-                                          <p className="italic underline" style={{ textIndent: 0 }}>Functional Impact on Daily Life:</p>
-                                          <p className="mt-1 italic" style={{ textIndent: '2em', lineHeight: 1.5 }}>{condition.dailyImpact}</p>
+                                          <p className="italic underline" style={{ textIndent: 0, fontSize: '12pt', marginLeft: 0, marginTop: '1.5em', marginBottom: '0.5em' }}>Functional Impact on Daily Life:</p>
+                                          <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1.5em' }}>{condition.dailyImpact}</p>
                                         </div>
                                       )}
                                       
-                                      <div className="mt-2 space-y-1">
-                                        <p className="italic underline" style={{ textIndent: 0 }}>Legal Framework</p>
-                                        <p className="text-sm" style={{ textAlign: 'justify', textIndent: '2em', lineHeight: 1.5 }}>
+                                      <div style={{ marginTop: '1.5em' }}>
+                                        <p className="italic underline" style={{ textIndent: 0, fontSize: '12pt', marginLeft: 0, marginBottom: '0.5em' }}>Legal Framework</p>
+                                        <p style={{ textAlign: 'justify', textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1em' }}>
                                           Service connection and compensation for disability are governed by 38 U.S.C. §§ 1110 and 1131 and implementing regulations at 38 CFR Part 3 and Part 4. Under 38 CFR § 3.303(a), service connection may be established by evidence of continuity of symptomatology or by medical nexus. Under 38 CFR § 4.1 and § 4.10, disability ratings are based on the average impairment of earning capacity and the functional effects of the disability. The VA must consider all evidence of record and resolve reasonable doubt in the veteran’s favor under 38 U.S.C. § 5107(b).
                                         </p>
-                                        <p className="text-sm" style={{ textAlign: 'justify', textIndent: '2em', lineHeight: 1.5 }}>
+                                        <p style={{ textAlign: 'justify', textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt' }}>
                                           In <em>Buchanan v. Nicholson</em>, 451 F.3d 1334 (Fed. Cir. 2006), the Federal Circuit held that when the evidence is in relative equipoise, the benefit of the doubt must go to the veteran and the claim must be granted. The court reaffirmed that the “at least as likely as not” standard in 38 C.F.R. § 3.102 requires the VA to grant the claim when the evidence for and against service connection is evenly balanced. This standard applies to the evaluation of the conditions set forth in this supporting statement.
                                         </p>
                                       </div>
                                       
-                                      <p className="text-sm text-muted-foreground mt-1" style={{ textIndent: '2em', lineHeight: 1.5 }}>
+                                      <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginTop: '1.5em', color: '#000' }}>
                                         Per 38 CFR § 3.303, § 4.40, § 4.45, and § 4.59, the functional limitations caused by this condition warrant service connection and appropriate rating consideration.
                                       </p>
                                     </div>
                                   </div>
                                 ))}
                                 
-                                {/* Conclusion / Rationale - Exact Format: title no indent; paragraphs indented; 1.5 line spacing */}
-                                <div className="space-y-2 border-t pt-2 mt-3">
-                                  <p className="italic underline text-center" style={{ textIndent: 0, fontSize: '12pt' }}>Conclusion / Rationale</p>
-                                  <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
+                                {/* #9 Conclusion / Rationale - far left margin; same font and bold as Condition 1 (no italic) */}
+                                <div className="border-t pt-2" style={{ marginLeft: 0, paddingLeft: 0, marginTop: '2em' }}>
+                                  <p className="font-bold underline" style={{ textIndent: 0, textAlign: 'left', fontFamily: 'Arial', fontSize: '11pt', marginLeft: 0, marginBottom: '1.5em', color: '#000' }}>Conclusion / Rationale</p>
+                                  <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1.5em' }}>
                                     The evidence provided has proven that it is at least as likely as not (more likely than not), that my reported and documented medical conditions are directly related to events and/or exposure due to Active Military service. The medical evidence from my service records shows I have injuries and subsequent pain, which were are all direct causes of my active-duty service. All medical issues were present and existed within the first year after being discharged from active duty to present.
                                   </p>
-                                  <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
-                                    Please accept my formal written statement and evidence as proof of accepted VA claims.
-                                  </p>
-                                  <p style={{ textIndent: '2em', lineHeight: 1.5 }}>
-                                    If there is anything you need or would like to talk to me about, please get in touch with me at {profile.phone || "(XXX) XXX-XXXX"} or via personal email at: {profile.email || "XXXXX@email.com"}.
+                                  <p style={{ textIndent: '2em', lineHeight: 1.5, fontFamily: 'Arial', fontSize: '11pt', marginBottom: '1.5em' }}>
+                                    Please accept my formal written statement and evidence as proof of accepted VA claims. If there is anything you need or would like to talk to me about, please get in touch with me at {profile.phone || "(XXX) XXX-XXXX"} or via personal email at: {profile.email || "XXXXX@email.com"}.
                                   </p>
                                 </div>
                                 
-                                {/* Signature Block - Exact Format: at margin, 1.5 line spacing */}
-                                <div className="mt-8 pt-4" style={{ lineHeight: 1.5 }}>
+                                {/* Signature Block */}
+                                <div style={{ lineHeight: 1.5, marginTop: '2em' }}>
                                   <p>Respectfully submitted,</p>
-                                  <p className="mt-8"></p>
-                                  <p className="font-bold">Veteran {firstName} {lastName}</p>
+                                  <p style={{ marginTop: '2em' }} className="font-bold">Veteran {firstName} {lastName}</p>
                                 </div>
                                 </div>
+                              {/* ╔══════════════════════════════════════════════════════════════════╗
+                                  ║  END PROTECTED SECTION — SUPPLEMENTAL STATEMENT                 ║
+                                  ╚══════════════════════════════════════════════════════════════════╝ */}
 
                                 {/* Supportive Evidence/Exhibits For Claims - New Page */}
                                 {allEvidence.filter(e => e.status === "uploaded" && e.printEnabled).length > 0 && (
@@ -2007,6 +2068,7 @@ export default function ClaimBuilder() {
                         >
                           <div className="text-center mb-6">
                             <h2 className="text-2xl font-bold text-primary uppercase tracking-wide">VA CONTACT INFORMATION</h2>
+                            <p className="text-sm mt-1">(Print Supplemental Statement and any and/or all applicable records/documentation to submit to VA)</p>
                           </div>
                           <div className="bg-gray-50 p-6 rounded-lg border-2 border-primary/30 print:bg-white print:border-2 print:border-primary/30">
                             <h3 className="font-bold text-lg text-primary mb-4">VA Evidence Intake Center (Disability Claims):</h3>

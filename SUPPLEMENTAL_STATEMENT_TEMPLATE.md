@@ -1,174 +1,149 @@
-# Supplemental Statement Framework, Structure & Template
+# SUPPLEMENTAL STATEMENT — MEMORIALIZED TEMPLATE
 
-This document memorializes the **Supporting Statement / Documentation For VA Form 21-526EZ** framework, structure, and statement template used in the VA Claim Navigator. The live implementation is in `client/src/pages/ClaimBuilder.tsx` (Review & Generate Claim Package / Supporting Statement section).
-
----
-
-## 1. Framework & Purpose
-
-- **Legal basis:** VA Title 38 U.S.C. 1151; 38 U.S.C. §§ 1110, 1131; 38 CFR Part 3 and Part 4; 38 C.F.R. § 3.102; *Buchanan v. Nicholson*, 451 F.3d 1334 (Fed. Cir. 2006).
-- **Form:** Supporting documentation for **VA Form 21-526EZ** (Application for Disability Compensation and Related Compensation Benefits).
-- **Intent:** Formal written statement plus evidence submitted to the VA Evidence Intake Center to support service-connected disability claims, including PACT Act–related conditions.
+> **DO NOT MODIFY** — This document memorializes the finalized structure, formatting,
+> and template of the Supplemental Statement as approved on 2026-02-17.
+> Any code changes to the Supplemental Statement section in `ClaimBuilder.tsx`
+> must be reviewed against this reference to ensure compliance.
 
 ---
 
-## 2. Document Structure (Order of Sections)
+## 1. Header Block (Date / From / To / Subj)
 
-1. **Memorandum header** — Date, From, To, Subj, horizontal rule  
-2. **PACT Act request** — Centered statement requesting “NEW” claims reviewed & accepted under PACT ACT  
-3. **Introduction** — “To VA Intake Center,” plus two paragraphs (veteran identity, service connection, request to review conditions)  
-4. **Conditions detail** — For each condition (see Section 3)  
-5. **Conclusion / Rationale** — Bold underlined heading; three paragraphs (evidence standard, acceptance of statement, contact info)  
-6. **Signature block** — “Respectfully submitted,” then “Veteran [FirstName] [LastName]”  
-7. **Supportive Evidence/Exhibits For Claims** (if evidence attached) — New page; numbered list of documents; placeholder or image/PDF per document  
-8. **End of Claim Package** — “End of Claim Package,” total evidence count  
-9. **VA Contact Information** — Standalone page with VA Evidence Intake Center address and fax  
+| Property | Value |
+|----------|-------|
+| Font | Arial, 12pt |
+| Line spacing | Double spaced (lineHeight: 2) |
+| Alignment | Far left margin (marginLeft: 0, textIndent: 0) |
+| Color | Black (#000) |
+| "Date:", "From:", "To:" labels | **Bold** — values are normal weight |
+| "Subj:" line | Entire line is **bold** |
+| Separator | 4px solid black horizontal rule, full width |
 
----
-
-## 3. Statement Template by Section
-
-### 3.1 Memorandum Header
-
-- **Date:** `[current date MM/DD/YYYY]`
-- **From:** `Veteran [Full Name] (SSN: [XXX-XX-XXXX])`
-- **To:** `Veteran Affairs Claims Intake Center`
-- **Subj:** `Supporting Statement / Documentation For VA Form 21-526EZ Claims`
-- **Rule:** Full-width 4px black border under Subj
-
-**Styling:** Date/From/To/Subj labels in **bold**; Subj value also **bold**. Single line under header.
+### Format:
+```
+Date:    MM/DD/YYYY
+From:    Veteran [Full Name] (SSN: XXX-XX-XXXX)
+To:      Veteran Affairs Claims Intake Center
+Subj:    Supporting Statement / Documentation For VA Form 21-526EZ Claims
+─────────────────────────────────────────────────────
+```
 
 ---
 
-### 3.2 PACT Act Request (Centered)
+## 2. Introduction ("To VA Intake Center,")
 
-- **Text (exact):** `Requesting "NEW" claims to be Reviewed & Accepted to include conditions covered under the "PACT ACT:"`
-- **Styling:** Centered, **bold**, full width. **Do not alter wording.**
-
----
-
-### 3.3 Introduction
-
-- **Salutation:** `To VA Intake Center,` — **bold**
-- **Paragraph 1:**  
-  `I [Full Name] ([NameCode]), am filing the following statement in connection with my claims for Military Service-Connected benefits per VA Title 38 U.S.C. 1151. I am also submitting additional evidence that supports my claim(s) to be valid, true and associated with of my Active Military Service ([Branch]), as Primary and/or Secondary injuries/illness as a direct result of my Military service and hazardous conditions/exposures. Based on the totality of the circumstances, a service connection to my military service has been established per VA Title 38 U.S.C. 1151.`
-  - *[NameCode] = LastInitial + last 4 SSN; [Branch] = branch of service from profile.*
-- **Paragraph 2:**  
-  `These conditions should have already been accepted and "presumptively" approved by the VA Executive Administration once discharged from Active Duty. Thus, the VA failed to "service connect" my injuries upon discharge of my Military service which is no fault of mine (the Veteran). I am requesting your office review and approve the following medical conditions:`
-
-**Styling:** Justified text; first paragraph indented 2rem.
+| Property | Value |
+|----------|-------|
+| Salutation | "To VA Intake Center," — left aligned, no indent, 11pt Arial |
+| Spacing after salutation | marginBottom: 1em |
+| First paragraph | Indented (textIndent: 2em), 11pt Arial, 1.5 line spacing |
+| Evidence toggle | If uploaded evidence exists: "I am also submitting additional evidence…"; otherwise: "This statement supports my claim(s)…" |
+| Second paragraph | Indented (textIndent: 2em), 11pt Arial, 1.5 line spacing |
+| PACT Act sentence | Combined into second paragraph: "…I am requesting that the following new claims be reviewed and accepted, including conditions covered under the PACT Act:" |
 
 ---
 
-### 3.4 Conditions Detail (Per Condition)
+## 3. Condition Blocks (one per condition)
 
-**Layout:** Each condition in a block with left border (4px primary color), padding, justified text.
+### Condition Heading
+| Property | Value |
+|----------|-------|
+| Format | "Condition N: [CONDITION NAME]" |
+| Font | Large (text-lg), **bold**, underline |
+| Color | Black (#000) |
+| Alignment | Far left margin |
+| Spacing | marginTop: 2em above, marginBottom: 1.5em below |
 
-- **Condition heading (only line in bold + underline):**  
-  `Condition [N]: [CONDITION NAME] (Pg. #[page])`  
-  - *[N] = 1-based index. (Pg. #…) only if `sourcePage` is present.*
+### Subheadings (6 total)
+All subheadings share these properties:
 
-**Subheadings (underline only, not bold):**
+| Property | Value |
+|----------|-------|
+| Font size | **12pt** |
+| Style | **Italic + Underline** (no bold) |
+| Alignment | Far left margin (textIndent: 0, marginLeft: 0) |
+| Spacing | marginTop: 1.5em, marginBottom: 0.5em |
+| Color | Black (#000, inherited) |
 
-| Subheading | Content / Template |
-|------------|--------------------|
-| **Service Connection:** | Direct: `This condition is directly related to my active duty service and began during my time in service.` Secondary: `This condition developed as a secondary condition resulting from my existing service-connected disability.` If presumptive: append ` This condition qualifies for presumptive service connection under the PACT Act provisions.` |
-| **Onset:** | `Symptoms first manifested on or around [onsetDate].` (Only if onset date exists.) |
-| **Frequency:** | `Symptoms occur on a [frequency] basis.` |
-| **Current Symptoms:** | `[symptoms list].` (Only if symptoms selected.) |
-| **Functional Impact on Daily Life:** | Subheading underlined; next line italic, indented: `[dailyImpact]`. (Only if daily impact text exists.) |
-| **Legal Framework** | Fixed two paragraphs (see below). Subheading underlined only. |
+1. **Service Connection:** — Always shown
+2. **Onset:** — Shown when onsetDate is present
+3. **Frequency:** — Always shown
+4. **Current Symptoms:** — Shown when symptoms array is non-empty
+5. **Functional Impact on Daily Life:** — Shown when dailyImpact is present
+6. **Legal Framework** — Always shown
 
-**Legal Framework paragraphs (fixed text):**
+### Body Paragraphs Under Subheadings
+| Property | Value |
+|----------|-------|
+| Font | Arial, 11pt |
+| Indent | textIndent: 2em |
+| Line spacing | 1.5 |
+| Spacing after | marginBottom: 1.5em |
+| Color | Black (#000) |
+| Text align | Justify |
 
-1. Service connection and compensation for disability are governed by 38 U.S.C. §§ 1110 and 1131 and implementing regulations at 38 CFR Part 3 and Part 4. Under 38 CFR § 3.303(a), service connection may be established by evidence of continuity of symptomatology or by medical nexus. Under 38 CFR § 4.1 and § 4.10, disability ratings are based on the average impairment of earning capacity and the functional effects of the disability. The VA must consider all evidence of record and resolve reasonable doubt in the veteran’s favor under 38 U.S.C. § 5107(b).
+### Legal Framework Content
+- Two paragraphs: (1) statutory citations, (2) Buchanan v. Nicholson case law
+- Both justified, indented 2em, 11pt Arial
+- First paragraph has marginBottom: 1em
 
-2. In *Buchanan v. Nicholson*, 451 F.3d 1334 (Fed. Cir. 2006), the Federal Circuit held that when the evidence is in relative equipoise, the benefit of the doubt must go to the veteran and the claim must be granted. The court reaffirmed that the "at least as likely as not" standard in 38 C.F.R. § 3.102 requires the VA to grant the claim when the evidence for and against service connection is evenly balanced. This standard applies to the evaluation of the conditions set forth in this supporting statement.
-
-**Closing line (per condition):**  
-`Per 38 CFR § 3.303, § 4.40, § 4.45, and § 4.59, the functional limitations caused by this condition warrant service connection and appropriate rating consideration.`  
-- Styling: smaller, muted.
-
----
-
-### 3.5 Conclusion / Rationale
-
-- **Heading:** `Conclusion / Rationale` — **bold**, **underline**, centered.
-- **Paragraph 1:**  
-  `The evidence provided has proven that it is at least as likely as not (more likely than not), that my reported and documented medical conditions are directly related to events and/or exposure due to Active Military service. The medical evidence from my service records shows I have injuries and subsequent pain, which were are all direct causes of my active-duty service. All medical issues were present and existed within the first year after being discharged from active duty to present.`
-- **Paragraph 2:**  
-  `Please accept my formal written statement and evidence as proof of accepted VA claims.`
-- **Paragraph 3:**  
-  `If there is anything you need or would like to talk to me about, please get in touch with me at [phone] or via personal email at: [email].`
-
-**Styling:** Top border, padding, justified.
-
----
-
-### 3.6 Signature Block
-
-- `Respectfully submitted,`
-- Blank space (signature)
-- `Veteran [FirstName] [LastName]` — **bold**
+### Closing Paragraph (Per Condition)
+- "Per 38 CFR § 3.303, § 4.40, § 4.45, and § 4.59…"
+- Indented 2em, 11pt Arial, marginTop: 1.5em, black
 
 ---
 
-### 3.7 Supportive Evidence/Exhibits For Claims
+## 4. Conclusion / Rationale
 
-- **When:** Only if at least one uploaded, print-enabled evidence document exists.
-- **Page:** New page (print break before).
-- **Heading:** `Supportive Evidence/Exhibits For Claims` — uppercase, bold, centered.
-- **Preponderance note (italic):**  
-  `(Preponderance of the evidence is that degree of relevant evidence that a reasonable person, considering the record as a whole, would accept as sufficient to find that a contested fact is more likely to be true than untrue).`
-- **Intro:** `The following [N] document(s) are attached as supporting evidence for this claim:`
-- **Per document:** Numbered (1, 2, …); evidence type (bold); optional description; filename if present. Then image display, or “PDF Document - See attached file,” or “Document attached” / “Document pending upload” as appropriate.
-- **Footer:** `End of Claim Package` (bold); `Total Evidence Documents: [N]`
+| Property | Value |
+|----------|-------|
+| Heading | "Conclusion / Rationale" |
+| Font | Arial, 11pt, **bold**, underline |
+| Color | Black (#000) |
+| Alignment | Far left margin |
+| Spacing | marginTop: 2em (border-top separator), marginBottom: 1.5em |
 
----
-
-### 3.8 VA Contact Information (Standalone Page)
-
-- **Heading:** `VA CONTACT INFORMATION` — large, bold, uppercase, centered.
-- **Subheading:** `VA Evidence Intake Center (Disability Claims):` — bold.
-- **Mailing Address:**  
-  Department of Veterans Affairs  
-  Evidence Intake Center  
-  PO Box 4444  
-  Janesville, WI 53547-4444  
-- **Fax Number:** 844-531-7818  
-
-**Styling:** New page; block always visible in print.
+### Body
+- Two paragraphs, both indented (2em), 11pt Arial, 1.5 line spacing, marginBottom: 1.5em
+- Second paragraph combines "Please accept my formal written statement…" with "If there is anything you need…" into one sentence/paragraph
 
 ---
 
-## 4. Styling Rules (Memorialized)
+## 5. Signature Block
 
-| Element | Rule |
-|--------|------|
-| Condition line (per-condition title) | **Bold** + **underline** only for this line. |
-| All subheadings under each condition | **Underline only** (no bold): Service Connection, Onset, Frequency, Current Symptoms, Functional Impact on Daily Life, Legal Framework. |
-| Legal Framework body | No bold; smaller text; left padding. |
-| Memorandum header labels | Bold (Date, From, To, Subj). |
-| PACT Act line | Bold, centered; wording fixed. |
-| Conclusion / Rationale heading | Bold, underline, centered. |
-| Signature name | Bold. |
-| VA Contact heading/subheading | Bold as specified. |
+| Property | Value |
+|----------|-------|
+| "Respectfully submitted," | Normal weight, marginTop: 2em from last paragraph |
+| "Veteran [First] [Last]" | **Bold**, marginTop: 2em below "Respectfully submitted," |
 
 ---
 
-## 5. Data Sources (Variables)
+## 6. Generated Memorandum (AI Path)
 
-- **Profile:** firstName, lastName, ssn, phone, email (from user profile).
-- **Service history:** branch (for branch name).
-- **Conditions:** name, sourcePage (for Pg. #), onsetDate, frequency, connectionType, isPresumptive, symptoms, dailyImpact.
-- **Evidence:** uploaded and print-enabled items only; type, description, fileName, fileType, objectPath/fileData for display.
+When an AI-generated memorandum exists, headings follow these rules:
+
+| Heading Type | Style |
+|-------------|-------|
+| CONDITION N: … | Bold, underline, black, far left, double spaced above/below |
+| CONCLUSION / RATIONALE | Bold, underline, black, far left, double spaced above/below |
+| CURRENT SYMPTOMS AND FUNCTIONAL IMPAIRMENT | **Bold** (no italic), far left |
+| SUPPORTING EVIDENCE CITATIONS | **Bold** (no italic), far left |
+| APPLICABLE LEGAL FRAMEWORK | **Italic + Underline** (no bold), far left |
+| CASE LAW PRECEDENTS | **Italic + Underline** (no bold), far left |
+| REQUESTED RATING AND LEGAL ARGUMENT | **Italic + Underline** (no bold), far left |
+| Body paragraphs | Indented 2em, justified |
 
 ---
 
-## 6. Implementation Reference
+## 7. Global Document Properties
 
-- **File:** `client/src/pages/ClaimBuilder.tsx`
-- **Section:** “Supporting Statement” / “Conditions Detail” and following blocks inside the generated memorandum (when `generatedMemorandum` is not set, the template above is used).
-- **Helper:** `conditionDisplayName(condition)` — returns `[name] (Pg. #[sourcePage])` when sourcePage exists, else name only.
+| Property | Value |
+|----------|-------|
+| Base font | Arial, 11pt |
+| Base color | Black (#000) throughout — no blue/primary color text |
+| Container | space-y-6 wrapper |
+| Print | border-0, padding-0, break-before-page |
 
-Changes to the supplemental statement content or structure should be reflected here and in the code so the template remains the single source of truth for the memorialized framework and structure.
+---
+
+*This template was memorialized on 2026-02-17. Do not alter without explicit approval.*

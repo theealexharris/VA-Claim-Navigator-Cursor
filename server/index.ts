@@ -91,6 +91,9 @@ process.on("message", (msg) => {
 
 /** Open the default browser to the app URL (dev only). Uses shell on Windows so "start" works. */
 function openBrowser(url: string) {
+  // Always log the URL so you can open manually if auto-open fails (e.g. in Cursor/VS Code terminal)
+  console.log(`\n  >>> Open the app in your browser: ${url}\n`);
+
   const isWin = process.platform === "win32";
   const command = isWin
     ? `start "" "${url}"`           // "" = window title; quoted URL; requires shell (cmd.exe)
@@ -103,13 +106,13 @@ function openBrowser(url: string) {
       // Fallback: PowerShell (works when cmd "start" fails or ComSpec is PowerShell)
       exec(`powershell -NoProfile -Command "Start-Process '${url}'"`, { shell: "powershell.exe" }, (err2: ExecException | null) => {
         if (err2) {
-          log(`Could not auto-open browser: ${(err as Error).message}. Open manually: ${url}`);
+          log(`Could not auto-open browser. Open this URL manually: ${url}`);
         } else {
           log(`Browser opened (PowerShell): ${url}`);
         }
       });
     } else if (err) {
-      log(`Could not auto-open browser: ${(err as Error).message}. Open manually: ${url}`);
+      log(`Could not auto-open browser. Open this URL manually: ${url}`);
     } else {
       log(`Browser opened: ${url}`);
     }
@@ -193,39 +196,82 @@ app.post(
   }
 );
 
+// ─── File upload: OPTIONS preflight (CORS) ──────────────────────────────────
+app.options('/api/storage/upload/*', (_req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.status(204).end();
+});
+
 // ─── File upload endpoint (MUST be before express.json()) ───────────────────
 // Accepts uploads with or without auth — Evidence for Claims always works.
 app.put(
   '/api/storage/upload/*',
   async (req, res) => {
+    // CORS headers so uploads work from any origin
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Methods', 'PUT, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
     try {
       const authHeader = req.headers.authorization;
       const hasAuth = !!(authHeader && authHeader.startsWith('Bearer '));
       const accessToken = hasAuth ? authHeader!.substring(7) : null;
 
-      const storagePath = (req.params as Record<string, string>)["0"];
+      // Robust wildcard param capture — works across Express 4 & 5
+      const storagePath =
+        (req.params as any)[0] ||
+        (req.params as Record<string, string>)["0"] ||
+        req.url.replace(/^\/api\/storage\/upload\//, '');
+      console.log('[FILE UPLOAD] Route hit:', req.method, req.url, 'storagePath:', storagePath);
+
       if (!storagePath) {
+        console.error('[FILE UPLOAD] Missing storage path. params:', req.params, 'url:', req.url);
         return res.status(400).json({ error: 'Missing storage path' });
       }
 
       const contentType = req.headers['content-type'] || 'application/octet-stream';
 
+      // Guardrail: ensure temp directory exists before every write
+      if (!fs.existsSync(TEMP_UPLOAD_DIR)) {
+        fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
+      }
+
       const tempFileName = `${Date.now()}-${storagePath.replace(/\//g, '_')}`;
       const serverFilePath = path.join(TEMP_UPLOAD_DIR, tempFileName);
 
+      // Stream request body to disk with abort handling
       await new Promise<void>((resolve, reject) => {
         const writeStream = fs.createWriteStream(serverFilePath);
-        req.pipe(writeStream);
-        writeStream.on('finish', resolve);
+        let settled = false;
+
+        const cleanup = (err: Error) => {
+          if (settled) return;
+          settled = true;
+          writeStream.destroy();
+          try { if (fs.existsSync(serverFilePath)) fs.unlinkSync(serverFilePath); } catch {}
+          reject(err);
+        };
+
+        writeStream.on('finish', () => {
+          if (!settled) { settled = true; resolve(); }
+        });
         writeStream.on('error', (err) => {
           console.error('[FILE UPLOAD] Write error:', err.message);
-          reject(err);
+          cleanup(err);
         });
         req.on('error', (err) => {
-          console.error('[FILE UPLOAD] Request error:', err.message);
-          writeStream.destroy();
-          reject(err);
+          console.error('[FILE UPLOAD] Request stream error:', err.message);
+          cleanup(err);
         });
+        req.on('aborted', () => {
+          console.warn('[FILE UPLOAD] Client aborted upload');
+          cleanup(new Error('Upload aborted by client'));
+        });
+
+        req.pipe(writeStream);
       });
 
       const fileSize = fs.statSync(serverFilePath).size;
@@ -273,8 +319,10 @@ app.put(
         serverFilePath,
       });
     } catch (error: any) {
-      console.error('[FILE UPLOAD] Error:', error.message);
-      res.status(500).json({ error: error.message || 'Upload failed' });
+      console.error('[FILE UPLOAD] Error:', error.message, error.stack);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message || 'Upload failed' });
+      }
     }
   }
 );

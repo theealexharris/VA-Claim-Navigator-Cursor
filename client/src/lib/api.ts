@@ -4,6 +4,14 @@ import { getAccessToken, setAccessToken, removeAccessToken, getAuthHeaders } fro
 // Re-export for convenience
 export { getAccessToken, setAccessToken, removeAccessToken };
 
+/** Base URL for API requests. Uses current origin so auth works and URL bar stays correct (e.g. localhost:5000). */
+function apiBase(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  return "";
+}
+
 // Helper to get headers with Authorization if token exists
 function getHeaders(includeContentType: boolean = true): HeadersInit {
   return getAuthHeaders(includeContentType);
@@ -27,24 +35,35 @@ async function safeJsonParse(response: Response): Promise<any> {
 
 // Auth API
 export async function register(email: string, password: string, firstName?: string, lastName?: string) {
-  const res = await fetch("/api/auth/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, firstName, lastName }),
-    credentials: "include",
-  });
-  
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, firstName: firstName ?? "", lastName: lastName ?? "" }),
+      credentials: "include",
+    });
+  } catch (networkErr: any) {
+    const msg = networkErr?.message ?? "";
+    const isFetchFailed = /failed to fetch|fetch failed|networkerror|load failed/i.test(msg);
+    throw new Error(
+      isFetchFailed
+        ? "Cannot reach the server. Use http://localhost:5000 in your browser and ensure the dev server is running."
+        : "Unable to reach the server. Check your connection and try again."
+    );
+  }
+
   const data = await safeJsonParse(res);
-  
+
   if (!res.ok) {
     const errorMessage = data?.message || data?.error || `Registration failed (${res.status})`;
     throw new Error(errorMessage);
   }
-  
+
   if (!data) {
     throw new Error("Empty response from server");
   }
-  
+
   // Email verification required – return the flag so UI can show code entry
   if (data.requireEmailVerification) {
     return { requireEmailVerification: true, email };
@@ -53,7 +72,6 @@ export async function register(email: string, password: string, firstName?: stri
   // Immediate login (verification disabled) – store token
   if (data.accessToken) {
     setAccessToken(data.accessToken);
-    // Record login timestamp for session expiry tracking (60-minute window)
     localStorage.setItem("loginTimestamp", Date.now().toString());
   }
   return data.user || data;
@@ -62,14 +80,20 @@ export async function register(email: string, password: string, firstName?: stri
 export async function login(email: string, password: string) {
   let res: Response;
   try {
-    res = await fetch("/api/auth/login", {
+    res = await fetch(`${apiBase()}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
       credentials: "include",
     });
   } catch (networkErr: any) {
-    throw new Error("Unable to reach the server. Check your connection and try again.");
+    const msg = networkErr?.message ?? "";
+    const isFetchFailed = /failed to fetch|fetch failed|networkerror|load failed/i.test(msg);
+    throw new Error(
+      isFetchFailed
+        ? "Cannot reach the server. Use http://localhost:5000 and ensure the dev server is running."
+        : "Unable to reach the server. Check your connection and try again."
+    );
   }
 
   const data = await safeJsonParse(res);
@@ -102,20 +126,23 @@ export async function login(email: string, password: string) {
 }
 
 export async function verifyEmail(email: string, code: string) {
-  const res = await fetch("/api/auth/verify-email", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, code }),
-    credentials: "include",
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/api/auth/verify-email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, code }),
+      credentials: "include",
+    });
+  } catch (networkErr: any) {
+    throw new Error("Cannot reach the server. Use http://localhost:5000 and ensure the dev server is running.");
+  }
   const data = await safeJsonParse(res);
   if (!res.ok) {
     throw new Error(data?.message || "Verification failed. Please try again.");
   }
   if (!data) throw new Error("Empty response from server");
-  // Verification successful – store token and return user
   if (data.accessToken) setAccessToken(data.accessToken);
-  // Record login timestamp for session expiry tracking (60-minute window)
   localStorage.setItem("loginTimestamp", Date.now().toString());
   return data;
 }

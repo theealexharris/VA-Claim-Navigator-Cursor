@@ -10,7 +10,6 @@ import {
   Menu,
   Bell,
   User,
-  Shield,
   ChevronRight,
   ChevronDown,
   BookOpen,
@@ -121,7 +120,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
       <div className="p-6 flex items-center gap-3 border-b border-sidebar-border">
-        <Shield className="h-8 w-8 text-secondary fill-secondary/20" />
+        <img src="/favicon.png" alt="VA Claim Navigator" className="h-8 w-8 object-contain shrink-0" />
         <span className="font-serif font-bold text-lg text-white">Claim Navigator</span>
       </div>
       
@@ -225,20 +224,20 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       {/* Main Content */}
       <div className="flex-1 md:ml-64 print:ml-0 flex flex-col min-h-screen">
         <header className="h-16 bg-white border-b flex items-center justify-between px-4 md:px-8 sticky top-0 z-30 print:hidden">
-          <div className="md:hidden">
-            <Sheet open={isMobileOpen} onOpenChange={setIsMobileOpen}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <Menu className="h-6 w-6" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="p-0 w-64 border-r-0">
-                <SidebarContent />
-              </SheetContent>
-            </Sheet>
-          </div>
-
-          <div className="flex items-center gap-2 text-muted-foreground text-base">
+          <div className="flex items-center gap-3">
+            <div className="md:hidden">
+              <Sheet open={isMobileOpen} onOpenChange={setIsMobileOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <Menu className="h-6 w-6" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="left" className="p-0 w-64 border-r-0">
+                  <SidebarContent />
+                </SheetContent>
+              </Sheet>
+            </div>
+            <img src="/favicon.png" alt="VA Claim Navigator" className="h-8 w-8 object-contain shrink-0" />
             <span className="font-semibold text-foreground">{getWelcomeMessage()}</span>
           </div>
 
