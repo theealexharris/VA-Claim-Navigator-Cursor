@@ -12,7 +12,8 @@ import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import { Loader2, CheckCircle2, ChevronLeft } from "lucide-react";
 import { Link } from "wouter";
 import { addNotification } from "@/components/NotificationDropdown";
-import { getProfile, updateProfile, getAccessToken } from "@/lib/api";
+import { getProfile, updateProfile } from "@/lib/api";
+import { authFetch } from "@/lib/api-helpers";
 
 interface ProfileData {
   firstName: string;
@@ -112,6 +113,18 @@ export default function Profile() {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const handleSSNBlur = async () => {
+    const ssnToSave = formData.ssn?.trim() ?? "";
+    try {
+      await updateProfile({ ssn: ssnToSave });
+      const merged = { ...JSON.parse(localStorage.getItem("userProfile") || "{}"), ssn: ssnToSave };
+      localStorage.setItem("userProfile", JSON.stringify(merged));
+      if (ssnToSave) toast({ title: "SSN saved", description: "Your SSN has been saved automatically." });
+    } catch (_) {
+      toast({ title: "Could not save SSN", description: "Please try again or save the full profile.", variant: "destructive" });
+    }
+  };
+
   const pendingDeluxePayment = typeof window !== "undefined" ? localStorage.getItem("pendingDeluxePayment") === "true" : false;
 
   const handleSave = async () => {
@@ -133,12 +146,8 @@ export default function Profile() {
 
     setIsSaving(true);
     try {
-      // First verify authentication is still valid before saving
-      const token = getAccessToken();
-      const authCheck = await fetch("/api/auth/me", {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        credentials: "include",
-      });
+      // Verify authentication is still valid (authFetch auto-refreshes expired JWT)
+      const authCheck = await authFetch("/api/auth/me");
       if (!authCheck.ok) {
         // Only show "Session Expired" if user has been logged in for 60+ minutes
         const loginTime = localStorage.getItem("loginTimestamp");
@@ -166,6 +175,8 @@ export default function Profile() {
         city: formData.city,
         state: formData.state,
         zipCode: formData.zipCode,
+        ssn: formData.ssn || undefined,
+        vaFileNumber: formData.vaFileNumber || undefined,
       });
       localStorage.setItem("userProfile", JSON.stringify(formData));
       // Mark personal information as complete for workflow progression
@@ -187,10 +198,8 @@ export default function Profile() {
           return;
         }
         try {
-          const response = await fetch("/api/stripe/checkout", {
+          const response = await authFetch("/api/stripe/checkout", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
             body: JSON.stringify({ priceId: deluxePriceId, tier: "deluxe" })
           });
           
@@ -256,10 +265,11 @@ export default function Profile() {
           setLocation("/dashboard/service-history");
         }, 100);
       }
-    } catch (error) {
+    } catch (error: any) {
+      const message = error?.message || "Failed to save changes. Please try again.";
       toast({
         title: "Error",
-        description: "Failed to save changes. Please try again.",
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -344,6 +354,7 @@ export default function Profile() {
                 <Input 
                   value={formData.ssn}
                   onChange={(e) => handleInputChange("ssn", e.target.value)}
+                  onBlur={handleSSNBlur}
                   placeholder="XXX-XX-XXXX"
                   className={`text-base ${formData.ssn ? "font-bold" : ""}`}
                   data-testid="input-profile-ssn"

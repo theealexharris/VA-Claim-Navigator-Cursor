@@ -173,6 +173,12 @@
   }
 }
 
+/* Remove unintended borders from memo paragraphs caused by global border-border rule (screen + print) */
+[data-testid="container-claim-memorandum"] p,
+[data-testid="container-claim-memorandum"] div {
+  border: none !important;
+}
+
 @page {
   margin: 0.5in;
 }

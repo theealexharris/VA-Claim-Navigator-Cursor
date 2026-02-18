@@ -39,7 +39,7 @@ export default function Dashboard() {
     if (urlParams.get("payment") === "success") {
       const tier = urlParams.get("tier") || "pro";
       
-      // Update subscription tier in userProfile
+      // Update subscription tier in userProfile (Pro and Deluxe get same claim builder access)
       const profile = localStorage.getItem("userProfile");
       if (profile) {
         const profileData = JSON.parse(profile);
@@ -57,6 +57,23 @@ export default function Dashboard() {
       
       // Clean up URL
       window.history.replaceState({}, document.title, "/dashboard");
+      window.dispatchEvent(new Event("workflowProgressUpdate"));
+    }
+
+    // Sync tier from selectedTier + paymentComplete so Deluxe (and Pro) get full claim builder even if they didn't land with ?payment=success
+    const selectedTier = localStorage.getItem("selectedTier");
+    const paymentComplete = localStorage.getItem("paymentComplete");
+    const profileJson = localStorage.getItem("userProfile");
+    if (profileJson && selectedTier && paymentComplete === "true") {
+      const tierKey = selectedTier.toLowerCase();
+      if (tierKey === "deluxe" || tierKey === "pro") {
+        const profileData = JSON.parse(profileJson);
+        if (profileData.subscriptionTier === "starter" || !profileData.subscriptionTier) {
+          profileData.subscriptionTier = tierKey;
+          localStorage.setItem("userProfile", JSON.stringify(profileData));
+          window.dispatchEvent(new Event("workflowProgressUpdate"));
+        }
+      }
     }
     
     // Check if onboarding should be shown

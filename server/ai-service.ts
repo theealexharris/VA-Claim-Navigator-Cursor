@@ -36,6 +36,22 @@ function isRetryableAiError(err: any): boolean {
   );
 }
 
+/** Returns true when the error is token/auth/config (do not expose raw message to client). */
+function isTokenOrAuthError(err: any): boolean {
+  const msg = String(err?.message || err || "").toLowerCase();
+  return (
+    msg.includes("invalid token") ||
+    msg.includes("invalid_token") ||
+    msg.includes("unauthorized") ||
+    msg.includes("anon") ||
+    msg.includes("api key") ||
+    msg.includes("api_key") ||
+    msg.includes("authentication") ||
+    msg.includes("jwt") ||
+    msg.includes("bearer")
+  );
+}
+
 /**
  * Call the Insforge AI chat API with automatic retry + model fallback.
  * On a credits/API-key/timeout error the call is retried once with the same
@@ -79,8 +95,14 @@ async function aiChat(
         const msg = err?.message || String(err);
         console.warn(`[AI] ${currentModel} attempt ${attempt + 1} failed: ${msg}`);
 
+        if (isTokenOrAuthError(err)) {
+          console.error("[AI] Token/auth error — check INSFORGE_ANON_KEY in .env");
+          throw new Error(
+            "Analysis service is not configured or the service key is invalid. Please add conditions manually in the Conditions step, or contact support."
+          );
+        }
         if (!isRetryableAiError(err)) {
-          // Non-retryable error (bad request, auth, etc.) — stop immediately
+          // Non-retryable error (bad request, etc.) — stop immediately
           throw err;
         }
 
@@ -865,9 +887,15 @@ export async function analyzeMedicalRecords(
       const pdfParse = (await import("pdf-parse")).default;
       const pdfData = await pdfParse(bufferToUse);
       const parsed = (pdfData.text || "").trim();
-      console.log(`[ANALYZE] pdf-parse extracted: ${parsed.length} chars, ${pdfData.numpages || "?"} pages`);
+      const numPages = pdfData.numpages || 0;
+      console.log(`[ANALYZE] pdf-parse extracted: ${parsed.length} chars, ${numPages} pages`);
       if (parsed.length > 200) {
-        // Text-layer PDF — analyze the extracted text directly (fast)
+        // Text-layer PDF — for large docs (>10 pages), chunk the text by pages
+        // so the AI processes manageable sections and captures all diagnoses
+        if (numPages > 10) {
+          console.log(`[ANALYZE] Large text-layer PDF (${numPages} pages) — using chunked text analysis`);
+          return analyzeTextLayerPdfInChunks(parsed, numPages, fileName);
+        }
         return analyzeExtractedText(parsed, fileName);
       }
       console.log(`[ANALYZE] pdf-parse: only ${parsed.length} chars — scanned document, trying single-file OCR then chunked approach`);
@@ -877,7 +905,7 @@ export async function analyzeMedicalRecords(
 
     // 2b. For smaller scanned PDFs, try one-shot fileParser (full document) before chunking
     const sizeMB = bufferToUse.length / (1024 * 1024);
-    if (sizeMB < 12) {
+    if (sizeMB < 25) {
       try {
         const oneShotBase64 = `data:application/pdf;base64,${bufferToUse.toString("base64")}`;
         console.log(`[ANALYZE] Trying one-shot fileParser for ${fileName} (${sizeMB.toFixed(1)}MB)`);
@@ -981,6 +1009,9 @@ async function analyzeScannedPdfInChunks(
     const endPage = Math.min(startPage + PAGES_PER_CHUNK, totalPages);
     const label = `pages ${startPage + 1}-${endPage} of ${totalPages}`;
 
+    // Rate-limit guard: brief pause between chunks to avoid API throttling
+    if (i > 0) await new Promise(r => setTimeout(r, 800));
+
     console.log(`[ANALYZE] Processing chunk ${i + 1}/${chunks}: ${label}`);
 
     try {
@@ -1046,12 +1077,85 @@ async function analyzeScannedPdfInChunks(
   return { diagnoses: deduped, rawAnalysis: rawParts.join("\n\n") };
 }
 
+/**
+ * Chunk a large text-layer PDF's extracted text by estimated pages and analyze
+ * each chunk independently, then deduplicate. This ensures every page of a
+ * 50, 100, or 500+ page PDF gets analyzed — not just the first 400k chars.
+ *
+ * Why? A text-layer PDF's extracted text can exceed what a single AI call can
+ * handle (400k chars). Splitting by estimated page boundaries means the AI
+ * sees all content and captures diagnoses from every section of the record.
+ */
+async function analyzeTextLayerPdfInChunks(
+  fullText: string,
+  totalPages: number,
+  fileName: string,
+): Promise<{ diagnoses: ExtractedDiagnosis[]; rawAnalysis: string }> {
+  const PAGES_PER_CHUNK = 10;
+  const charsPerPage = Math.max(Math.floor(fullText.length / totalPages), 200);
+  const charsPerChunk = charsPerPage * PAGES_PER_CHUNK;
+  const numChunks = Math.ceil(fullText.length / charsPerChunk);
+
+  console.log(`[ANALYZE] Chunking text-layer PDF: ${totalPages} pages, ~${charsPerPage} chars/page, ${numChunks} chunk(s) of ~${PAGES_PER_CHUNK} pages`);
+
+  const allDiagnoses: ExtractedDiagnosis[] = [];
+  const rawParts: string[] = [];
+
+  for (let i = 0; i < numChunks; i++) {
+    const chunkStart = i * charsPerChunk;
+    const chunkEnd = Math.min(chunkStart + charsPerChunk, fullText.length);
+    const chunkText = fullText.slice(chunkStart, chunkEnd);
+    const estStartPage = Math.floor(chunkStart / charsPerPage) + 1;
+    const estEndPage = Math.min(Math.floor(chunkEnd / charsPerPage), totalPages);
+    const label = `pages ~${estStartPage}-${estEndPage} of ${totalPages}`;
+
+    console.log(`[ANALYZE] Text chunk ${i + 1}/${numChunks}: ${label} (${chunkText.length} chars)`);
+
+    try {
+      const raw = await aiChat(SMART_MODEL, [
+        { role: "system", content: MEDICAL_RECORD_EXTRACTION_PROMPT },
+        {
+          role: "user",
+          content: `Document: ${fileName} (${label})\n\nScan, review, and extract ALL medical conditions, injuries, diagnoses, diseases, and medications from this section of a military/VA medical record. Look for every diagnosis, disease, medication (infer conditions from meds), abnormal finding, injury, limitation, and mental health note:\n\n${chunkText}`,
+        },
+      ], 4096, 0.3);
+
+      console.log(`[ANALYZE] Text chunk ${i + 1} response: ${raw.length} chars`);
+      rawParts.push(`--- ${label} ---\n${raw}`);
+
+      const chunkDiagnoses = parseDiagnosesFromResponse(raw);
+      const chunkFirstPage = String(estStartPage);
+      chunkDiagnoses.forEach((d) => {
+        if (!d.pageNumber || !String(d.pageNumber).trim()) d.pageNumber = chunkFirstPage;
+      });
+      console.log(`[ANALYZE] Text chunk ${i + 1} found ${chunkDiagnoses.length} diagnosis(es): ${chunkDiagnoses.map(d => d.conditionName).join(", ") || "(none)"}`);
+      allDiagnoses.push(...chunkDiagnoses);
+    } catch (chunkErr: any) {
+      console.warn(`[ANALYZE] Text chunk ${i + 1} failed: ${chunkErr.message}`);
+      rawParts.push(`--- ${label} --- ERROR: ${chunkErr.message}`);
+      // Continue with remaining chunks — don't abort the whole analysis
+    }
+  }
+
+  // Deduplicate by condition name (case-insensitive)
+  const seen = new Set<string>();
+  const deduped = allDiagnoses.filter((d) => {
+    const key = d.conditionName.toUpperCase().trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  console.log(`[ANALYZE] Chunked text analysis complete: ${allDiagnoses.length} total → ${deduped.length} unique diagnoses`);
+  return { diagnoses: deduped, rawAnalysis: rawParts.join("\n\n") };
+}
+
 /** Send extracted plain text to the AI for diagnosis extraction */
 async function analyzeExtractedText(
   text: string,
   fileName: string
 ): Promise<{ diagnoses: ExtractedDiagnosis[]; rawAnalysis: string }> {
-  const MAX_TEXT_CHARS = 400000; // ~100k tokens, supports ~500 pages
+  const MAX_TEXT_CHARS = 500000; // ~125k tokens, supports ~600+ pages of text
   const textForAI = text.slice(0, MAX_TEXT_CHARS);
   const wasTruncated = text.length > MAX_TEXT_CHARS;
 

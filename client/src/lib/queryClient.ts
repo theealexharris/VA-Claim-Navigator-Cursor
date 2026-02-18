@@ -1,5 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { getAccessToken, removeAccessToken, getAuthHeaders } from "./api-helpers";
+import { authFetch } from "./api-helpers";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -8,25 +8,16 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-function getHeaders(includeContentType: boolean = true): HeadersInit {
-  return getAuthHeaders(includeContentType);
-}
-
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const res = await fetch(url, {
-    method,
-    headers: getHeaders(!!data),
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+  const options: RequestInit = { method };
+  if (data) options.body = JSON.stringify(data);
 
-  if (res.status === 401) {
-    removeAccessToken();
-  }
+  // authFetch adds Authorization, Content-Type, credentials, and auto-refreshes on 401
+  const res = await authFetch(url, options);
 
   await throwIfResNotOk(res);
   return res;
@@ -38,13 +29,10 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
-      headers: getHeaders(false),
-      credentials: "include",
-    });
+    // authFetch adds Authorization, credentials, and auto-refreshes on 401
+    const res = await authFetch(queryKey.join("/") as string);
 
     if (res.status === 401) {
-      removeAccessToken();
       if (unauthorizedBehavior === "returnNull") {
         return null;
       }
@@ -57,16 +45,13 @@ export const getQueryFn: <T>(options: {
 function shouldRetry(error: unknown): boolean {
   if (error instanceof Error) {
     const message = error.message;
-    // Check for HTTP status codes that shouldn't be retried
     if (message.startsWith("401:") || message.startsWith("403:") || message.startsWith("404:")) {
       return false;
     }
-    // Network errors should be retried
     if (message.includes("fetch failed") || message.includes("network") || message.includes("NetworkError")) {
       return true;
     }
   }
-  // Default to retrying for unknown errors (likely network issues)
   return true;
 }
 

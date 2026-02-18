@@ -28,7 +28,7 @@ const openConnections = new Set<Socket>();
 function cleanupTempUploads() {
   try {
     if (!fs.existsSync(TEMP_UPLOAD_DIR)) return;
-    const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+    const MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours (allows time for large file analysis)
     const now = Date.now();
     for (const file of fs.readdirSync(TEMP_UPLOAD_DIR)) {
       try {
@@ -66,7 +66,7 @@ function gracefulShutdown(signal: string) {
   console.log(`[SHUTDOWN] ${signal} received — closing server… (${openConnections.size} open connections)`);
 
   // Destroy all tracked sockets so close() doesn't wait for keep-alive / HMR
-  for (const socket of openConnections) {
+  for (const socket of Array.from(openConnections)) {
     socket.destroy();
   }
   openConnections.clear();
@@ -137,7 +137,7 @@ const httpServer = createServer(app);
 // Prevent stale connections from piling up (common crash cause on Windows)
 httpServer.keepAliveTimeout = 65_000;   // slightly > typical proxy 60s
 httpServer.headersTimeout = 70_000;     // must be > keepAliveTimeout
-httpServer.requestTimeout = 5 * 60_000; // 5 min max per request (upload-safe)
+httpServer.requestTimeout = 10 * 60_000; // 10 min max per request (large file upload + chunked AI analysis)
 httpServer.maxHeadersCount = 100;
 
 // Track connections so shutdown can destroy them (prevents port-stuck)
@@ -161,8 +161,30 @@ declare module "http" {
 
 // ─── Startup state (shared across the boot sequence) ────────────────────────
 const port = parseInt(process.env.PORT || "5000", 10);
-const host = "localhost";
+// Bind to 0.0.0.0 so browser can connect via localhost or 127.0.0.1 (fixes connection refused on some Windows setups)
+const host = process.env.HOST || "0.0.0.0";
 const bootState = { routesReady: false, viteReady: false, bootError: null as string | null };
+
+// ─── CORS: allow browser at localhost / 127.0.0.1 to reach API and claim builder ─
+const allowedOrigins = [
+  `http://localhost:${port}`,
+  `http://127.0.0.1:${port}`,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && (allowedOrigins.includes(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+  next();
+});
 
 // ─── Static assets ──────────────────────────────────────────────────────────
 app.use('/attached_assets', express.static(path.join(process.cwd(), 'attached_assets')));
@@ -513,7 +535,7 @@ function startListening(attemptNum = 1) {
     httpServer.removeListener("error", errorHandler);
 
     const url = `http://localhost:${port}`;
-    log(`serving on ${url}`);
+    log(`serving on ${url} (listening on ${host}:${port})`);
 
     // Browser auto-open (dev only): 2s delay so port is fully bound (helps on Windows)
     if (process.env.NODE_ENV !== "production") {

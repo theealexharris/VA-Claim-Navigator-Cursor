@@ -16,9 +16,11 @@ import {
   Gift,
   Users,
   Mail,
-  Lock
+  Lock,
+  MessageSquare
 } from "lucide-react";
 import { ContactUsDialog } from "@/components/ContactUsDialog";
+import { CONTACT_EMAIL_ADMIN, FEEDBACK_EMAIL } from "@/lib/contact";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -180,6 +182,10 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           <NavItem href="/dashboard/funnel-contacts" icon={Users} label="Funnel Contacts" isActive={location === "/dashboard/funnel-contacts"} />
         )}
         <NavItem href="/dashboard/settings" icon={Settings} label="Settings" isActive={location === "/dashboard/settings"} />
+
+        <div className="pt-4 pb-2 px-3 text-xs font-semibold text-sidebar-foreground/50 uppercase tracking-wider">
+          Contact
+        </div>
         <ContactUsDialog 
           trigger={
             <button className="flex items-center w-full px-3 py-2.5 text-sidebar-foreground/70 hover:text-white hover:bg-sidebar-accent rounded-md group">
@@ -188,6 +194,26 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
             </button>
           }
         />
+        <a
+          href={`mailto:${CONTACT_EMAIL_ADMIN}`}
+          className="flex items-center gap-2 px-3 py-1.5 ml-8 text-xs text-sidebar-foreground/60 hover:text-white transition-colors truncate"
+          title={CONTACT_EMAIL_ADMIN}
+        >
+          <Mail className="h-3 w-3 shrink-0" />
+          <span className="truncate">{CONTACT_EMAIL_ADMIN}</span>
+        </a>
+        {/* Feedback widget — click opens email to send feedback */}
+        <div className="mt-3 mx-3 p-3 rounded-lg border border-sidebar-border bg-sidebar-accent/30">
+          <p className="text-xs font-medium text-sidebar-foreground/80 mb-2">Complaints & Feedback Appreciated</p>
+          <a
+            href={`mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent("VA Claim Navigator - Feedback")}`}
+            className="flex items-center justify-center gap-2 w-full px-3 py-2 text-xs font-medium text-sidebar-foreground bg-sidebar-accent hover:bg-sidebar-accent/80 rounded-md transition-colors"
+            title="Send feedback to VA Claim Navigator"
+          >
+            <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+            Send feedback
+          </a>
+        </div>
       </div>
 
       <div className="p-4 border-t border-sidebar-border">

@@ -1,13 +1,16 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { InsforgeStorageService } from "./insforge-storage-service";
+import { isInsforgeAnonKeyConfigured } from "./insforge";
 import { 
   registerUser, 
   signInUser, 
   signOutUser,
   requireInsforgeAuth,
   optionalInsforgeAuth,
-  getInsforgeSession 
+  getInsforgeSession,
+  refreshAccessToken,
+  verifyEmailDirect 
 } from "./insforge-auth";
 import { insforgeStorage } from "./insforge-storage";
 import { z } from "zod";
@@ -40,6 +43,8 @@ export async function registerRoutes(
       zipCode: dbUser.zip_code,
       avatarUrl: dbUser.avatar_url,
       vaId: dbUser.va_id,
+      ssn: dbUser.ssn ?? undefined,
+      vaFileNumber: dbUser.va_file_number ?? undefined,
       subscriptionTier: dbUser.subscription_tier,
       role: dbUser.role,
       twoFactorEnabled: dbUser.two_factor_enabled,
@@ -54,7 +59,8 @@ export async function registerRoutes(
   function apiUpdatesToDbUpdates(updates: Record<string, any>): Record<string, any> {
     const map: Record<string, string> = {
       firstName: "first_name", lastName: "last_name", zipCode: "zip_code",
-      avatarUrl: "avatar_url", vaId: "va_id", subscriptionTier: "subscription_tier",
+      avatarUrl: "avatar_url", vaId: "va_id", ssn: "ssn", vaFileNumber: "va_file_number",
+      subscriptionTier: "subscription_tier",
       twoFactorEnabled: "two_factor_enabled", profileCompleted: "profile_completed",
       stripeCustomerId: "stripe_customer_id", stripeSubscriptionId: "stripe_subscription_id",
       createdAt: "created_at",
@@ -67,13 +73,12 @@ export async function registerRoutes(
     return db;
   }
 
-  // Auth config check – prevents recurring "temporarily unavailable" when Insforge isn't set up
+  // Auth config check – use same validation as insforge client (trimmed key, no placeholder)
   function getAuthConfigError(): string | null {
-    const anon = process.env.INSFORGE_ANON_KEY;
-    const base = process.env.INSFORGE_API_BASE_URL;
-    if (!anon || anon.trim() === "" || /your.*anon|placeholder|xxx/i.test(anon)) {
-      return "Auth is not configured. Add INSFORGE_ANON_KEY to your .env file (get it from your Insforge project dashboard).";
+    if (!isInsforgeAnonKeyConfigured()) {
+      return "Auth is not configured. Add INSFORGE_ANON_KEY to your .env (get it from your Insforge project dashboard) and restart the server.";
     }
+    const base = (process.env.INSFORGE_API_BASE_URL || "").trim();
     if (base && /your-insforge|placeholder/i.test(base)) {
       return "Auth URL is not configured. Set INSFORGE_API_BASE_URL in .env to your Insforge backend URL.";
     }
@@ -180,10 +185,10 @@ export async function registerRoutes(
       
       // Return stored profile so dashboard can be populated from navigator data
       const apiUser = dbUser ? dbUserToApiUser(dbUser) : { id: result.user.id, email: result.user.email, firstName: firstName ?? "", lastName: lastName ?? "" };
-      res.json({ 
-        user: apiUser,
-        accessToken: result.accessToken 
-      });
+      const regPayload: { user: any; accessToken?: string; refreshToken?: string } = { user: apiUser };
+      if (result.accessToken) regPayload.accessToken = result.accessToken;
+      if (result.refreshToken) regPayload.refreshToken = result.refreshToken;
+      res.json(regPayload);
     } catch (error: any) {
       const errorMessage = String(error?.message || "Registration failed");
       console.error("[REGISTER] Error:", errorMessage);
@@ -266,29 +271,39 @@ export async function registerRoutes(
       }
 
       const apiUser = dbUser ? dbUserToApiUser(dbUser) : result.user;
-      const payload: { user: any; accessToken?: string } = { user: apiUser };
+      const payload: { user: any; accessToken?: string; refreshToken?: string } = { user: apiUser };
       if (result.accessToken) payload.accessToken = result.accessToken;
+      if (result.refreshToken) payload.refreshToken = result.refreshToken;
 
       console.log(`[LOGIN] Success for: ${email}`);
       res.json(payload);
     } catch (error: any) {
-      const msg = String(error?.message || "");
-      console.error("[LOGIN] Error:", msg, "| errorCode:", error?.errorCode);
-      if (!res.headersSent) {
-        if (/anon|api key|unauthorized|401|invalid key|invalid api|config/i.test(msg.toLowerCase())) {
-          return res.status(503).json({
-            message: "Auth is not configured correctly. Set INSFORGE_ANON_KEY in .env and restart the dev server.",
-          });
-        }
-        if (/network|fetch|econnrefused|timeout/i.test(msg)) {
-          return res.status(503).json({
-            message: "Cannot reach the auth service. Check INSFORGE_ANON_KEY and INSFORGE_API_BASE_URL in .env and restart the server.",
-          });
-        }
-        res.status(401).json({
-          message: "Invalid email or password. If you recently signed up, make sure you've verified your email first.",
+      const msg = String(error?.message || "").toLowerCase();
+      const statusCode = error?.statusCode ?? 0;
+      console.error("[LOGIN] Error:", error?.message, "| statusCode:", statusCode, "| errorCode:", error?.errorCode);
+      if (res.headersSent) return;
+
+      // Config / key / auth service unreachable → 503 with clear message
+      if (
+        statusCode === 401 && /invalid token|invalid key|anon|api key|unauthorized/i.test(String(error?.errorCode || ""))
+        || /anon|api key|invalid key|invalid api|config|invalid token/i.test(msg)
+      ) {
+        return res.status(503).json({
+          message: "Auth service is not configured correctly. Set INSFORGE_ANON_KEY and INSFORGE_API_BASE_URL in .env and restart the server.",
         });
       }
+      if (/network|fetch|econnrefused|enotfound|timeout|econnrefused/i.test(msg)) {
+        return res.status(503).json({
+          message: "Cannot reach the auth service. Check INSFORGE_API_BASE_URL in .env and that the Insforge backend is reachable.",
+        });
+      }
+
+      // Invalid credentials or unverified email → 401 with user-facing message
+      const safeMessage =
+        statusCode === 403 || /verify|verification|email.*confirm/i.test(msg)
+          ? "Please verify your email before signing in. Check your inbox for the verification link or code."
+          : "Invalid email or password. If you recently signed up, make sure you've verified your email first.";
+      return res.status(401).json({ message: safeMessage });
     }
   });
 
@@ -298,12 +313,9 @@ export async function registerRoutes(
       if (!email || !code) {
         return res.status(400).json({ message: "Email and verification code are required" });
       }
-      const { insforge: insforgeClient } = await import("./insforge");
-      const { data, error } = await insforgeClient.auth.verifyEmail({ email: email.trim(), otp: String(code).trim() });
-      if (error) {
-        return res.status(400).json({ message: error.message || "Invalid or expired verification code" });
-      }
-      if (!data) {
+      const data = await verifyEmailDirect(email.trim(), String(code).trim());
+
+      if (!data || !data.user) {
         return res.status(400).json({ message: "Verification failed. Please try again." });
       }
 
@@ -330,10 +342,41 @@ export async function registerRoutes(
       }
 
       const apiUser = dbUser ? dbUserToApiUser(dbUser) : (authUser ?? { email });
-      res.json({ user: apiUser, accessToken: data.accessToken });
+      const verifyPayload: { user: any; accessToken?: string | null; refreshToken?: string | null } = { user: apiUser, accessToken: data.accessToken };
+      if (data.refreshToken) verifyPayload.refreshToken = data.refreshToken;
+      res.json(verifyPayload);
     } catch (error: any) {
       if (!res.headersSent) {
-        res.status(500).json({ message: error.message || "Verification failed" });
+        const msg = error?.message || "Verification failed";
+        const isExpired = /expired|invalid/i.test(msg);
+        res.status(isExpired ? 400 : 500).json({ message: msg });
+      }
+    }
+  });
+
+  // Token refresh – client sends its refreshToken to get a new accessToken + refreshToken
+  app.post("/api/auth/refresh", async (req, res) => {
+    try {
+      const { refreshToken } = req.body ?? {};
+      if (!refreshToken || typeof refreshToken !== "string") {
+        return res.status(400).json({ message: "refreshToken is required" });
+      }
+
+      const result = await refreshAccessToken(refreshToken.trim());
+
+      if (!result?.accessToken) {
+        return res.status(401).json({ message: "Token refresh failed. Please sign in again." });
+      }
+
+      res.json({
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken ?? null,
+        user: result.user ?? null,
+      });
+    } catch (error: any) {
+      console.error("[REFRESH] Error:", error?.message);
+      if (!res.headersSent) {
+        res.status(401).json({ message: "Session expired. Please sign in again." });
       }
     }
   });
@@ -422,7 +465,9 @@ export async function registerRoutes(
       
       res.json(dbUserToApiUser(updatedUser));
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      const msg = String(error?.message || "Failed to save profile.").trim();
+      console.error("[PROFILE PATCH] Error:", msg);
+      if (!res.headersSent) res.status(500).json({ message: msg || "Failed to save changes. Please try again." });
     }
   });
 
@@ -1158,6 +1203,14 @@ export async function registerRoutes(
 
   app.post("/api/ai/analyze-medical-records", optionalInsforgeAuth(), async (req, res) => {
     try {
+      const { isInsforgeAnonKeyConfigured } = await import("./insforge");
+      if (!isInsforgeAnonKeyConfigured()) {
+        console.warn("[ANALYZE] INSFORGE_ANON_KEY missing or placeholder — analysis unavailable");
+        return res.status(503).json({
+          message: "Analysis service is not configured. Please add conditions manually in the Conditions step.",
+        });
+      }
+
       const body = req.body && typeof req.body === "object" ? req.body : {};
       const { fileData, fileType, fileName, extractedText, serverFilePath } = body;
       const fileDataLen = typeof fileData === "string" ? fileData.length : 0;
@@ -1185,6 +1238,9 @@ export async function registerRoutes(
 
         const stats = fs.statSync(resolvedPath);
         console.log(`[ANALYZE] Reading file from disk: ${resolvedPath} (${(stats.size / (1024 * 1024)).toFixed(1)}MB)`);
+
+        // Touch mtime so cleanup doesn't delete the file during long-running analysis
+        try { fs.utimesSync(resolvedPath, new Date(), new Date()); } catch {}
 
         const fileBuffer = fs.readFileSync(resolvedPath);
         const result = await analyzeMedicalRecords(
@@ -1217,8 +1273,14 @@ export async function registerRoutes(
       console.log(`[ANALYZE] Analysis complete: ${result.diagnoses.length} diagnoses found`);
       res.json(result);
     } catch (error: any) {
-      console.error("[ANALYZE] Analysis error:", error.message, error.stack?.slice(0, 500));
-      res.status(500).json({ message: error.message || "Failed to analyze medical records. Please try again." });
+      const rawMessage = error?.message || "";
+      const isTokenOrAuth =
+        /invalid token|invalid_token|unauthorized|anon|api key|api_key|authentication|jwt|bearer|not configured|service key/i.test(rawMessage);
+      console.error("[ANALYZE] Analysis error:", isTokenOrAuth ? "(token/auth — sanitized)" : rawMessage, error.stack?.slice(0, 300));
+      const safeMessage = isTokenOrAuth
+        ? "Analysis service is temporarily unavailable. Please add conditions manually in the Conditions step."
+        : (rawMessage || "Failed to analyze medical records. Please try again.");
+      res.status(isTokenOrAuth ? 503 : 500).json({ message: safeMessage });
     }
   });
 

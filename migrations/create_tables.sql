@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS users (
   profile_completed BOOLEAN DEFAULT false NOT NULL,
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
+  ssn TEXT,
+  va_file_number TEXT,
   created_at TIMESTAMP DEFAULT NOW() NOT NULL
 );
 
@@ -190,3 +192,7 @@ CREATE INDEX IF NOT EXISTS idx_site_stats_key ON site_stats(key);
 -- Initialize site_stats with default value
 INSERT INTO site_stats (key, value) VALUES ('vets_served', 526)
 ON CONFLICT (key) DO NOTHING;
+
+-- Optional: if users table already existed without ssn/va_file_number, run in Insforge SQL editor:
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS ssn TEXT;
+-- ALTER TABLE users ADD COLUMN IF NOT EXISTS va_file_number TEXT;

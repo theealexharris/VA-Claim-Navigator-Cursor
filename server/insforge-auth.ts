@@ -1,9 +1,10 @@
-import { insforge, getAuthenticatedClient } from './insforge';
+import { insforge, getAuthenticatedClient, INSFORGE_BASE_URL, getInsforgeKey } from './insforge';
 import type { Request, Response, NextFunction } from 'express';
 
 /**
  * Insforge Auth Service
- * Replaces Passport.js with Insforge auth SDK
+ * Uses client_type=mobile for all auth flows so refreshToken is returned explicitly
+ * in the response body (web flow uses httpOnly cookies which don't survive our proxy).
  */
 
 export interface InsforgeUser {
@@ -24,31 +25,50 @@ export interface InsforgeSession {
   expiresAt?: Date;
 }
 
+/** Common headers for direct Insforge REST calls (anonKey as Bearer + JSON) */
+function insforgeHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const key = getInsforgeKey();
+  if (key) headers['Authorization'] = `Bearer ${key}`;
+  return headers;
+}
+
 /**
- * Middleware to extract and verify Insforge session from request
+ * Validate a JWT access token against the Insforge backend via REST API.
+ * The SDK's getCurrentSession() only works in browsers (relies on in-memory state
+ * or cookie refresh). On the server we must call the REST endpoint directly.
  */
 export async function getInsforgeSession(req: Request): Promise<InsforgeSession | null> {
   try {
-    // Try to get access token from Authorization header
     const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const accessToken = authHeader.substring(7);
-      const client = getAuthenticatedClient(accessToken);
-      const { data, error } = await client.auth.getCurrentSession();
-      
-      if (!error && data?.session) {
-        return data.session as unknown as InsforgeSession;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return null;
+    }
+
+    const accessToken = authHeader.substring(7).trim();
+    if (!accessToken) return null;
+
+    // Call Insforge REST API to validate the JWT and get the current user
+    const res = await fetch(`${INSFORGE_BASE_URL}/api/auth/sessions/current`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
+
+    if (!res.ok) {
+      // Token is invalid or expired — don't log noise for routine 401s
+      if (res.status !== 401) {
+        console.warn(`[AUTH] Insforge session validation failed: ${res.status}`);
       }
+      return null;
     }
 
-    // Try to get session from cookie (if using httpOnly cookies)
-    const { data, error } = await insforge.auth.getCurrentSession();
-    
-    if (!error && data?.session) {
-      return data.session as unknown as InsforgeSession;
-    }
+    const data = await res.json().catch(() => null);
+    if (!data?.user) return null;
 
-    return null;
+    return {
+      accessToken,
+      user: data.user as InsforgeUser,
+    };
   } catch (error: any) {
     console.error('[AUTH] getInsforgeSession error:', error.message);
     return null;
@@ -99,65 +119,75 @@ export function requireInsforgeAuth() {
 }
 
 /**
- * Register a new user with Insforge
- * Returns: { user, accessToken, requireEmailVerification }
+ * Register a new user with Insforge (client_type=mobile → explicit refreshToken)
+ * Returns: { user, accessToken, refreshToken, requireEmailVerification }
  */
 export async function registerUser(email: string, password: string, name?: string) {
-  const { data, error } = await insforge.auth.signUp({
-    email,
-    password,
-    name,
-  });
+  const body: Record<string, string> = { email, password };
+  if (name) body.name = name;
 
-  if (error) {
-    console.error('[INSFORGE AUTH] signUp error:', error.message || 'Unknown');
-    throw new Error(error.message || 'Failed to register user');
+  let res: globalThis.Response;
+  try {
+    res = await fetch(`${INSFORGE_BASE_URL}/api/auth/users?client_type=mobile`, {
+      method: 'POST',
+      headers: insforgeHeaders(),
+      body: JSON.stringify(body),
+    });
+  } catch (networkErr: any) {
+    console.error('[INSFORGE AUTH] signUp network error:', networkErr.message);
+    throw new Error('Cannot reach the auth service. Check INSFORGE_API_BASE_URL.');
   }
 
-  if (!data) {
-    throw new Error('No response data from auth service');
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok || !data) {
+    const msg = data?.message || data?.error || 'Failed to register user';
+    console.error('[INSFORGE AUTH] signUp error:', msg);
+    throw new Error(msg);
   }
 
-  // Return normalized response
-  // Insforge returns: { user, accessToken, requireEmailVerification, redirectTo, csrfToken }
   return {
     user: data.user,
-    accessToken: data.accessToken,
+    accessToken: data.accessToken ?? null,
+    refreshToken: data.refreshToken ?? null,
     requireEmailVerification: data.requireEmailVerification || false,
   };
 }
 
 /**
- * Sign in a user with Insforge
- * Returns: { user, accessToken } - normalizes SDK response (top-level or session nested)
+ * Sign in a user with Insforge (client_type=mobile → explicit refreshToken)
+ * Returns: { user, accessToken, refreshToken }
  */
 export async function signInUser(email: string, password: string) {
-  console.log(`[INSFORGE AUTH] signInWithPassword called for: ${email}`);
-  
-  const { data, error } = await insforge.auth.signInWithPassword({
-    email,
-    password,
-  });
+  console.log(`[INSFORGE AUTH] signIn called for: ${email}`);
 
-  console.log(`[INSFORGE AUTH] signIn response:`, { data: !!data, error: error?.message });
-
-  if (error) {
-    console.error(`[INSFORGE AUTH] signIn error:`, JSON.stringify(error));
-    // Preserve the original error code so the route handler can detect specific cases
-    const err = new Error(error.message || 'Invalid credentials') as Error & { statusCode?: number; errorCode?: string };
-    err.statusCode = (error as any).statusCode;
-    err.errorCode = (error as any).error; // e.g. "AUTH_UNAUTHORIZED"
+  let res: globalThis.Response;
+  try {
+    res = await fetch(`${INSFORGE_BASE_URL}/api/auth/sessions?client_type=mobile`, {
+      method: 'POST',
+      headers: insforgeHeaders(),
+      body: JSON.stringify({ email, password }),
+    });
+  } catch (networkErr: any) {
+    console.error('[INSFORGE AUTH] signIn network error:', networkErr.message);
+    const err = new Error('Cannot reach the auth service.') as Error & { statusCode?: number; errorCode?: string };
     throw err;
   }
 
-  if (!data) {
-    throw new Error('No response data from auth service');
+  const data = await res.json().catch(() => null);
+
+  console.log(`[INSFORGE AUTH] signIn response: status=${res.status}, hasData=${!!data}`);
+
+  if (!res.ok || !data) {
+    const msg = data?.message || 'Invalid credentials';
+    console.error(`[INSFORGE AUTH] signIn error:`, JSON.stringify(data));
+    const err = new Error(msg) as Error & { statusCode?: number; errorCode?: string };
+    err.statusCode = res.status;
+    err.errorCode = data?.error;
+    throw err;
   }
 
-  // Normalize: SDK may return { user, accessToken } or { session: { user, accessToken } }
-  const user = data.user ?? (data as any).session?.user;
-  const accessToken = data.accessToken ?? (data as any).session?.accessToken ?? null;
-
+  const user = data.user;
   if (!user) {
     console.error('[INSFORGE AUTH] signIn: no user in response', data);
     throw new Error('Invalid login response');
@@ -165,7 +195,69 @@ export async function signInUser(email: string, password: string) {
 
   return {
     user,
-    accessToken: accessToken ?? undefined,
+    accessToken: data.accessToken ?? undefined,
+    refreshToken: data.refreshToken ?? undefined,
+  };
+}
+
+/**
+ * Verify email with Insforge (client_type=mobile → explicit refreshToken)
+ * Returns: { user, accessToken, refreshToken }
+ */
+export async function verifyEmailDirect(email: string, otp: string) {
+  let res: globalThis.Response;
+  try {
+    res = await fetch(`${INSFORGE_BASE_URL}/api/auth/email/verify?client_type=mobile`, {
+      method: 'POST',
+      headers: insforgeHeaders(),
+      body: JSON.stringify({ email, otp }),
+    });
+  } catch (networkErr: any) {
+    throw new Error('Cannot reach the auth service for email verification.');
+  }
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data) {
+    throw new Error(data?.message || 'Invalid or expired verification code');
+  }
+
+  return {
+    user: data.user,
+    accessToken: data.accessToken ?? null,
+    refreshToken: data.refreshToken ?? null,
+  };
+}
+
+/**
+ * Refresh an expired access token using a refresh token (client_type=mobile).
+ * Returns: { user, accessToken, refreshToken }
+ */
+export async function refreshAccessToken(refreshToken: string) {
+  let res: globalThis.Response;
+  try {
+    res = await fetch(`${INSFORGE_BASE_URL}/api/auth/refresh?client_type=mobile`, {
+      method: 'POST',
+      headers: insforgeHeaders(),
+      body: JSON.stringify({ refreshToken }),
+    });
+  } catch (networkErr: any) {
+    console.error('[INSFORGE AUTH] refresh network error:', networkErr.message);
+    throw new Error('Cannot reach the auth service for token refresh.');
+  }
+
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok || !data) {
+    const msg = data?.message || 'Token refresh failed';
+    console.error('[INSFORGE AUTH] refresh error:', msg);
+    throw new Error(msg);
+  }
+
+  console.log('[INSFORGE AUTH] Token refreshed successfully');
+  return {
+    user: data.user,
+    accessToken: data.accessToken,
+    refreshToken: data.refreshToken,
   };
 }
 

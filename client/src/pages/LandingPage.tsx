@@ -30,6 +30,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { CONTACT_EMAIL_ADMIN } from "@/lib/contact";
 import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
+import { authFetch } from "@/lib/api-helpers";
 import heroVideo from "@assets/Claim_navigator_video_1768853413666.mp4";
 import avatar1 from "@assets/stock_images/diverse_professional_43b32cf6.jpg";
 import avatar2 from "@assets/stock_images/diverse_professional_31dd8b43.jpg";
@@ -131,10 +132,8 @@ export default function LandingPage() {
     setIsProcessingPayment(true);
     
     try {
-      const response = await fetch("/api/stripe/checkout", {
+      const response = await authFetch("/api/stripe/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ priceId, tier: selectedTier.tier })
       });
 
@@ -521,11 +520,7 @@ export default function LandingPage() {
               <CardHeader className="text-center pb-2 pt-6">
                 <CardTitle className="text-2xl font-serif text-primary">BUSINESS</CardTitle>
                 <CardDescription className="text-sm">
-                  For all Businesses, Law Firms, VA Organizations, please contact us at{" "}
-                  <a href={`mailto:${CONTACT_EMAIL_ADMIN}`} className="font-medium text-primary underline">
-                    {CONTACT_EMAIL_ADMIN}
-                  </a>
-                  .
+                  For all Businesses, Law Firms, VA Organizations, please contact us.
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-4">
@@ -542,6 +537,17 @@ export default function LandingPage() {
                   <PricingFeature>Priority Technical Support</PricingFeature>
                   <PricingFeature>Training and Onboarding</PricingFeature>
                 </ul>
+
+                <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mb-4 text-center">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Contact Email</p>
+                  <a
+                    href={`mailto:${CONTACT_EMAIL_ADMIN}`}
+                    className="text-sm font-medium text-primary hover:text-primary/80 underline underline-offset-2"
+                  >
+                    {CONTACT_EMAIL_ADMIN}
+                  </a>
+                </div>
+
                 <a href={`mailto:${CONTACT_EMAIL_ADMIN}`}>
                   <Button 
                     className="w-full h-11 font-semibold bg-secondary text-secondary-foreground hover:bg-secondary/90" 
@@ -601,7 +607,7 @@ export default function LandingPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Check className="h-4 w-4 text-green-600" />
-                <span>AI Claim Memorandum generation</span>
+                <span>Support Statement (AI-generated after review)</span>
               </div>
             </div>
             <Button 

@@ -42,7 +42,7 @@ export default function AuthPage() {
     fetch(`${typeof window !== "undefined" ? window.location.origin : ""}/api/auth/status`)
       .then((r) => r.json())
       .then((d) => setAuthConfigError(d.error ?? null))
-      .catch(() => setAuthConfigError(null));
+      .catch(() => setAuthConfigError("Could not reach the server. Ensure the backend is running (npm run dev) and you're using the correct URL (e.g. http://localhost:5000)."));
   }, []);
 
   // Sync view when URL changes; set Deluxe pending when user lands on signup with tier=deluxe
@@ -92,7 +92,11 @@ export default function AuthPage() {
       path = "/dashboard/profile";
     } else if (tierParam === "pro") {
       localStorage.setItem("selectedTier", "pro");
-      path = "/dashboard/profile";
+      // Pro users who were sent to login to reach claim builder go there; others go to profile
+      path =
+        redirectAfterLogin && redirectAfterLogin.startsWith("/dashboard")
+          ? redirectAfterLogin
+          : "/dashboard/profile";
     } else if (redirectAfterLogin && redirectAfterLogin.startsWith("/dashboard")) {
       path = redirectAfterLogin;
     }

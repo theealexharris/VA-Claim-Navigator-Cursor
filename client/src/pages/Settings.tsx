@@ -9,6 +9,7 @@ import { Bell, Shield, CreditCard, Check, Crown, Eye, EyeOff, Trash2, AlertTrian
 import { useToast } from "@/hooks/use-toast";
 import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import { PROMO_ACTIVE } from "@/hooks/use-subscription";
+import { authFetch } from "@/lib/api-helpers";
 import {
   Dialog,
   DialogContent,
@@ -169,10 +170,8 @@ export default function Settings() {
 
     setIsProcessingPayment(true);
     try {
-      const response = await fetch("/api/stripe/checkout", {
+      const response = await authFetch("/api/stripe/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ priceId, tier: tierKey })
       });
 

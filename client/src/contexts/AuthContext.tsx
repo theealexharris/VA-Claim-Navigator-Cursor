@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from "react";
-import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister, removeAccessToken } from "../lib/api";
+import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister, removeAccessToken, removeRefreshToken } from "../lib/api";
 import type { User } from "@shared/schema";
 
 const SESSION_DURATION_MS = 60 * 60 * 1000; // 60 minutes
@@ -48,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function handleSessionExpired() {
     removeAccessToken();
+    removeRefreshToken();
     setUser(null);
     // Clear user data but preserve claim builder and evidence so re-login restores Evidence for Claims and AI can re-analyze
     const keysToRemove = [
@@ -63,11 +64,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.dispatchEvent(new CustomEvent("sessionExpired"));
   }
 
-  // When a 401 occurs (e.g. from analysis/upload), clear session but preserve claim builder data so re-login restores evidence
+  // When a 401 occurs (e.g. from analysis/upload) after refresh has already failed, clear session
   useEffect(() => {
     const onAuthRequired = () => {
       clearSessionTimer();
       removeAccessToken();
+      removeRefreshToken();
       setUser(null);
       // Do NOT clear claimBuilderEvidence, claimBuilderConditions, generatedMemorandum so Evidence for Claims and claim stay intact
       window.dispatchEvent(new CustomEvent("sessionExpired", { detail: { soft: true } }));
@@ -81,10 +83,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearSessionTimer();
   }, [clearSessionTimer]);
 
+  // Sync API user to localStorage so subscriptionTier (Pro/Deluxe) and profile are available for Dashboard and Claim Builder
+  function syncUserProfileToStorage(apiUser: User) {
+    if (!apiUser || typeof apiUser !== "object" || !apiUser.id) return;
+    try {
+      const existing = localStorage.getItem("userProfile");
+      const merged = existing ? { ...JSON.parse(existing), ...apiUser } : { ...apiUser };
+      localStorage.setItem("userProfile", JSON.stringify(merged));
+      window.dispatchEvent(new Event("workflowProgressUpdate"));
+    } catch (_) {}
+  }
+
   async function checkAuth() {
     try {
+      // getCurrentUser() uses authFetch which auto-refreshes expired JWT
       const currentUser = await getCurrentUser();
       setUser(currentUser);
+      syncUserProfileToStorage(currentUser);
       // If user is already logged in, start/resume the session timer
       startSessionTimer();
     } catch (error) {
@@ -100,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const loggedInUser = result && typeof result === "object" ? (result.user ?? result) : null;
     if (loggedInUser && typeof loggedInUser === "object") {
       setUser(loggedInUser);
+      syncUserProfileToStorage(loggedInUser);
       // loginTimestamp is set in api.ts login(); start the 60-minute timer
       startSessionTimer();
     } else {
@@ -113,10 +129,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (result?.requireEmailVerification) {
       return { requireEmailVerification: true };
     }
-    // Otherwise we got a real user back – set it in state
+    // Otherwise we got a real user back – set it in state and sync to localStorage (Pro/Deluxe tier, etc.)
     const userData = result && typeof result === "object" && result.id ? result : null;
     if (userData) {
       setUser(userData);
+      syncUserProfileToStorage(userData as User);
       // loginTimestamp is set in api.ts register(); start the 60-minute timer
       startSessionTimer();
     }

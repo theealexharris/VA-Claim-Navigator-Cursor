@@ -1,6 +1,33 @@
 import { insforge, getAuthenticatedClient } from './insforge';
 import type { IStorage } from './storage-interface';
 
+/** Map API/camelCase user fields to Insforge users table columns (snake_case). Schema cache expects exact column names. */
+const USER_CAMEL_TO_SNAKE: Record<string, string> = {
+  firstName: 'first_name',
+  lastName: 'last_name',
+  zipCode: 'zip_code',
+  avatarUrl: 'avatar_url',
+  vaId: 'va_id',
+  ssn: 'ssn',
+  vaFileNumber: 'va_file_number',
+  subscriptionTier: 'subscription_tier',
+  twoFactorEnabled: 'two_factor_enabled',
+  profileCompleted: 'profile_completed',
+  stripeCustomerId: 'stripe_customer_id',
+  stripeSubscriptionId: 'stripe_subscription_id',
+  createdAt: 'created_at',
+};
+
+function userPayloadToSnakeCase(payload: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v === undefined) continue;
+    const col = USER_CAMEL_TO_SNAKE[k] ?? k;
+    out[col] = v;
+  }
+  return out;
+}
+
 /**
  * Insforge Storage Service
  * Implements IStorage interface using Insforge database SDK instead of Drizzle ORM
@@ -34,10 +61,12 @@ export class InsforgeStorageService implements IStorage {
   }
 
   async createUser(user: any, accessToken?: string): Promise<any> {
-    // Note: User creation is handled by Insforge auth, this is for additional user data
+    // Note: User creation is handled by Insforge auth, this is for additional user data.
+    // Normalize to snake_case so Insforge schema cache (users table columns) is satisfied.
+    const row = userPayloadToSnakeCase(typeof user === 'object' && user !== null ? user : {});
     const { data, error } = await this.getClient(accessToken).database
       .from('users')
-      .insert([user])
+      .insert([row])
       .select()
       .single();
 
@@ -46,14 +75,17 @@ export class InsforgeStorageService implements IStorage {
   }
 
   async updateUser(id: string, user: Partial<any>, accessToken?: string): Promise<any> {
+    // Insforge users table uses snake_case columns; schema cache errors if camelCase keys are sent.
+    const updates = userPayloadToSnakeCase(typeof user === 'object' && user !== null ? user : {});
+    if (Object.keys(updates).length === 0) return this.getUser(id, accessToken);
     const { data, error } = await this.getClient(accessToken).database
       .from('users')
-      .update(user)
+      .update(updates)
       .eq('id', id)
       .select()
       .single();
 
-    if (error) return undefined;
+    if (error) throw new Error(error.message || "Failed to update user profile.");
     return data || undefined;
   }
 
