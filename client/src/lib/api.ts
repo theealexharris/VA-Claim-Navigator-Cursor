@@ -8,7 +8,7 @@ import {
 // Re-export for convenience
 export { getAccessToken, setAccessToken, removeAccessToken, removeRefreshToken };
 
-/** Base URL for API requests. Uses current origin so auth works and URL bar stays correct (e.g. localhost:5000). */
+/** Base URL for API requests. Uses current origin so auth works and URL bar stays correct. */
 function apiBase(): string {
   if (typeof window !== "undefined" && window.location?.origin) {
     return window.location.origin;
@@ -47,7 +47,7 @@ export async function register(email: string, password: string, firstName?: stri
     const isFetchFailed = /failed to fetch|fetch failed|networkerror|load failed/i.test(msg);
     throw new Error(
       isFetchFailed
-        ? "Cannot reach the server. Use http://localhost:5000 in your browser and ensure the dev server is running."
+        ? "Cannot reach the server. Please check your internet connection and try again."
         : "Unable to reach the server. Check your connection and try again."
     );
   }
@@ -91,7 +91,7 @@ export async function login(email: string, password: string) {
     const isFetchFailed = /failed to fetch|fetch failed|networkerror|load failed/i.test(msg);
     throw new Error(
       isFetchFailed
-        ? "Cannot reach the server. Use http://localhost:5000 and ensure the dev server is running."
+        ? "Cannot reach the server. Please check your internet connection and try again."
         : "Unable to reach the server. Check your connection and try again."
     );
   }
@@ -107,7 +107,7 @@ export async function login(email: string, password: string) {
         : res.status === 403
           ? "Please verify your email to sign in."
           : res.status === 502 || res.status === 503
-            ? "Server or auth service is unavailable. Run the full app with npm run dev (not just dev:client) and try again."
+            ? "Server or auth service is temporarily unavailable. Please try again in a moment."
             : "Login failed. Please try again.";
     const errorMessage = typeof serverMessage === "string" && serverMessage.trim() ? serverMessage.trim() : fallback;
     const err = new Error(errorMessage) as Error & { code?: string };
@@ -143,7 +143,7 @@ export async function verifyEmail(email: string, code: string) {
       credentials: "include",
     });
   } catch (networkErr: any) {
-    throw new Error("Cannot reach the server. Use http://localhost:5000 and ensure the dev server is running.");
+    throw new Error("Cannot reach the server. Please check your internet connection and try again.");
   }
   const data = await safeJsonParse(res);
   if (!res.ok) {

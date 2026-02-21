@@ -42,7 +42,7 @@ export default function AuthPage() {
     fetch(`${typeof window !== "undefined" ? window.location.origin : ""}/api/auth/status`)
       .then((r) => r.json())
       .then((d) => setAuthConfigError(d.error ?? null))
-      .catch(() => setAuthConfigError("Could not reach the server. Ensure the backend is running (npm run dev) and you're using the correct URL (e.g. http://localhost:5000)."));
+      .catch(() => setAuthConfigError("Could not reach the server. Please check your internet connection and try again."));
   }, []);
 
   // Sync view when URL changes; set Deluxe pending when user lands on signup with tier=deluxe
@@ -76,7 +76,7 @@ export default function AuthPage() {
     }
   }, []);
 
-  // After successful login or signup – full redirect so URL bar shows correct origin (e.g. localhost:5000)
+  // After successful login or signup – full redirect so URL bar shows correct origin
   function navigateAfterAuth() {
     const urlParams = new URLSearchParams(window.location.search);
     const tierParam = urlParams.get("tier");
@@ -441,11 +441,6 @@ export default function AuthPage() {
               {isLogin ? "Sign up" : "Log in"}
             </Link>
           </p>
-          {typeof window !== "undefined" && window.location.port !== "5000" && (
-            <p className="text-xs text-muted-foreground/80">
-              For local dev, use <a href="http://localhost:5000" className="text-primary underline">http://localhost:5000</a>
-            </p>
-          )}
         </CardFooter>
       </Card>
     </div>

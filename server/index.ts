@@ -165,8 +165,14 @@ const port = parseInt(process.env.PORT || "5000", 10);
 const host = process.env.HOST || "0.0.0.0";
 const bootState = { routesReady: false, viteReady: false, bootError: null as string | null };
 
-// ─── CORS: allow browser at localhost / 127.0.0.1 to reach API and claim builder ─
+// ─── CORS: allow browser requests from production and dev origins ─────────────
 const allowedOrigins = [
+  // Production
+  "https://vaclaimnavigator.com",
+  "https://www.vaclaimnavigator.com",
+  // Vercel preview/deploy URLs
+  ...(process.env.VERCEL_URL ? [`https://${process.env.VERCEL_URL}`] : []),
+  // Dev
   `http://localhost:${port}`,
   `http://127.0.0.1:${port}`,
   "http://localhost:5173",
@@ -174,7 +180,13 @@ const allowedOrigins = [
 ];
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && (allowedOrigins.includes(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) {
+  if (origin && (
+    allowedOrigins.includes(origin) ||
+    origin.endsWith(".vercel.app") ||
+    origin.endsWith(".vaclaimnavigator.com") ||
+    origin.startsWith("http://localhost:") ||
+    origin.startsWith("http://127.0.0.1:")
+  )) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
@@ -437,7 +449,7 @@ if (process.env.NODE_ENV !== "production") {
     .url-bar button.copy:hover{background:#64748b}
     .tip{margin-top:16px;font-size:12px;color:#64748b;max-width:420px;text-align:center}</style></head>
     <body><div class="main"><div class="spinner"></div><div><h2>Starting up…</h2><p>The app is compiling. This page will reload automatically.</p><p class="status" id="status"></p></div></div>
-    <p class="tip" id="tip">If the app does not load after a minute, check the terminal for errors or run: npx kill-port 5000 then npm run dev</p>
+    <p class="tip" id="tip">If the app does not load after a minute, check the terminal for errors.</p>
     <div class="url-bar"><input type="text" id="app-url" value="${appUrl}" readonly />
     <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('app-url').value);this.textContent='Copied!'">Copy URL</button>
     <button type="button" onclick="window.location.reload()">Retry</button></div>
@@ -463,7 +475,7 @@ if (process.env.NODE_ENV !== "production") {
     .tip{margin-top:16px;font-size:13px;color:#94a3b8}</style></head>
     <body><div class="box"><h2>Server Startup Error</h2><p>The server hit an error while loading. It will auto-retry. Check the terminal for details.</p>
     <pre>${msg.replace(/</g, "&lt;")}</pre>
-    <p class="tip">Fix the error in the terminal, then refresh. If the port is stuck, run: <code>npx kill-port 5000</code> then <code>npm run dev</code></p></div></body></html>`;
+    <p class="tip">Fix the error in the terminal, then refresh.</p></div></body></html>`;
 
   // This middleware runs for EVERY non-API request. It gates traffic until routes + Vite are ready.
   app.use((req, res, next) => {
