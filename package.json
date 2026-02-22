@@ -1,13 +1,5 @@
 {
   "name": "va-claim-navigator",
-  "scripts": {
-    "dev": "vite",
-    "build:client": "vite build",
-    "build": "npm run build:client",
-    "start": "node server.js"
-  }
-}
-  "name": "rest-express",
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
