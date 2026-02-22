@@ -160,7 +160,7 @@ declare module "http" {
 }
 
 // ─── Startup state (shared across the boot sequence) ────────────────────────
-const port = parseInt(process.env.PORT || "5000", 10);
+const port = Number(process.env.PORT) || 3000;
 // Bind to 0.0.0.0 so browser can connect via localhost or 127.0.0.1 (fixes connection refused on some Windows setups)
 const host = process.env.HOST || "0.0.0.0";
 const bootState = { routesReady: false, viteReady: false, bootError: null as string | null };
