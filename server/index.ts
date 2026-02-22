@@ -545,14 +545,17 @@ function startListening(attemptNum = 1) {
   httpServer.listen(port, host, () => {
     // Remove the one-shot error handler now that we're listening
     httpServer.removeListener("error", errorHandler);
+    console.log(`[server] listening on http://${host}:${port}`);
+  });
+    // In production (Render), localhost is not the public URL.
+// Log bind info, and only use localhost for dev conveniences.
+log(`listening on ${host}:${port}`);
 
-    const url = `http://localhost:${port}`;
-    log(`serving on ${url} (listening on ${host}:${port})`);
-
-    // Browser auto-open (dev only): 2s delay so port is fully bound (helps on Windows)
-    if (process.env.NODE_ENV !== "production") {
-      setTimeout(() => openBrowser(url), 2000);
-    }
+if (process.env.NODE_ENV !== "production") {
+  const url = `http://localhost:${port}`;
+  log(`dev: serving on ${url}`);
+  setTimeout(() => openBrowser(url), 2000);
+}
 
     // Now register routes (async, with error handling)
     bootRoutes();
