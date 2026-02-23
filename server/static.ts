@@ -8,21 +8,20 @@ const serverDir =
     ? import.meta.dirname
     : path.dirname(fileURLToPath(import.meta.url));
 
-export function serveStatic(app: Express) {
-  const distPath = path.resolve(serverDir, "public");
-  if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
-    );
+export function serveStatic(app: any) {
+  const distPath = path.resolve(process.cwd(), "dist");
+  const indexHtml = path.join(distPath, "index.html");
+
+  if (!fs.existsSync(indexHtml)) {
+    throw new Error(`Vite build not found at ${indexHtml}`);
   }
+
+  console.log("[prod] serving frontend from:", distPath);
 
   app.use(express.static(distPath));
 
-  // fall through to index.html if the file doesn't exist (but never for API routes)
-  app.use("*", (req, res) => {
-    if (req.originalUrl.startsWith("/api/")) {
-      return res.status(404).json({ message: "API route not found" });
-    }
-    res.sendFile(path.resolve(distPath, "index.html"));
+  app.get("*", (req: any, res: any, next: any) => {
+    if (req.path?.startsWith("/api")) return next();
+    res.sendFile(indexHtml);
   });
 }
