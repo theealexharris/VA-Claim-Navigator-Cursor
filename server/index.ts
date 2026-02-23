@@ -557,10 +557,9 @@ if (process.env.NODE_ENV !== "production") {
   setTimeout(() => openBrowser(url), 2000);
 }
 
-    // Now register routes (async, with error handling)
-    bootRoutes();
-  });
-}
+  // Now register routes (async, with error handling)
+  bootRoutes();
+}    
 
 async function bootRoutes() {
   // Phase 1: Register API routes
