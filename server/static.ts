@@ -10,15 +10,16 @@ const serverDir =
 
 export function serveStatic(app: any) {
   const distPath = path.resolve(process.cwd(), "dist");
-  const indexHtml = path.join(distPath, "index.html");
+  const clientPath = path.join(distPath, "public");
+  const indexHtml = path.join(clientPath, "index.html");
 
   if (!fs.existsSync(indexHtml)) {
     throw new Error(`Vite build not found at ${indexHtml}`);
   }
 
-  console.log("[prod] serving frontend from:", distPath);
+  console.log("[prod] serving frontend from:", clientPath);
 
-  app.use(express.static(distPath));
+  app.use(express.static(clientPath));
 
   app.get("*", (req: any, res: any, next: any) => {
     if (req.path?.startsWith("/api")) return next();
