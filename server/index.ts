@@ -198,8 +198,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Static assets ──────────────────────────────────────────────────────────
-app.use('/attached_assets', express.static(path.join(process.cwd(), 'attached_assets')));
 
 // ─── Stripe webhook (MUST be before express.json()) ─────────────────────────
 app.post(
