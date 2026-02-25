@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiUrl } from "@/lib/api-helpers";
 import { Calendar, Clock, Phone, User, CheckCircle2, ArrowLeft, Shield, FileCheck, Star } from "lucide-react";
 import { format, addDays, startOfDay, isBefore, isWeekend } from "date-fns";
 
@@ -63,7 +64,7 @@ export default function ConsultationBooking() {
 
   const bookMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/api/consultations", {
+      const res = await fetch(apiUrl("/api/consultations"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

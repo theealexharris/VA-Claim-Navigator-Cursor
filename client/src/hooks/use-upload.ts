@@ -160,7 +160,8 @@ export function useUpload(options: UseUploadOptions = {}) {
       headers?: Record<string, string>;
     }> => {
       // Use the actual file properties to request a per-file presigned URL
-      const response = await fetch("/api/uploads/request-url", {
+      const { apiUrl } = await import("../lib/api-helpers");
+      const response = await fetch(apiUrl("/api/uploads/request-url"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

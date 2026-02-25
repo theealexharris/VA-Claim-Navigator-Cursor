@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiUrl } from "@/lib/api-helpers";
 import { Gift, Users, DollarSign, Copy, CheckCircle, Share2, ArrowLeft, Mail, Trash2 } from "lucide-react";
 
 interface Referral {
@@ -45,7 +46,7 @@ export default function ReferralProgram() {
 
   const createReferralMutation = useMutation({
     mutationFn: async (referredEmail?: string) => {
-      const res = await fetch("/api/referrals", {
+      const res = await fetch(apiUrl("/api/referrals"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -78,7 +79,7 @@ export default function ReferralProgram() {
 
   const deleteReferral = async (id: string) => {
     try {
-      const res = await fetch(`/api/referrals/${id}`, {
+      const res = await fetch(apiUrl(`/api/referrals/${id}`), {
         method: "DELETE",
         credentials: "include",
       });

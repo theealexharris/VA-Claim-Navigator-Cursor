@@ -6,6 +6,7 @@ import { createServer } from "http";
 import type { Socket } from "net";
 import path from "path";
 import fs from "fs";
+import os from "node:os";
 import { exec, type ExecException, type ExecOptions } from "node:child_process";
 import { promisify } from "node:util";
 import { WebhookHandlers } from './webhookHandlers';
@@ -161,21 +162,30 @@ declare module "http" {
 
 // ─── Startup state (shared across the boot sequence) ────────────────────────
 const port = parseInt(process.env.PORT || "5000", 10);
-// Bind to 0.0.0.0 so browser can connect via localhost or 127.0.0.1 (fixes connection refused on some Windows setups)
+// Bind to 0.0.0.0 so the server accepts connections on all interfaces
 const host = process.env.HOST || "0.0.0.0";
 const bootState = { routesReady: false, viteReady: false, bootError: null as string | null };
 
-// ─── CORS: allow browser at localhost / 127.0.0.1 to reach API and claim builder ─
+// App URL for redirects and display (e.g. https://vaclaimnavigator.com)
+const appBaseUrl = (process.env.APP_URL || "https://vaclaimnavigator.com").replace(/\/$/, "");
+
+// ─── CORS: allow app domain(s); in dev allow any origin for flexibility ─
 const allowedOrigins = [
-  `http://localhost:${port}`,
-  `http://127.0.0.1:${port}`,
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
+  appBaseUrl,
+  "https://www.vaclaimnavigator.com",
+  "http://vaclaimnavigator.com",
+  "http://www.vaclaimnavigator.com",
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean) : []),
 ];
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && (allowedOrigins.includes(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:"))) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
+  const allowOrigin = process.env.NODE_ENV !== "production" && origin
+    ? origin
+    : (origin && allowedOrigins.includes(origin))
+      ? origin
+      : null;
+  if (allowOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", allowOrigin);
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
@@ -418,7 +428,7 @@ app.get("/api/health", (_req, res) => {
 
 // ─── Loading / error page middleware (dev only, shown while routes & Vite compile) ─
 if (process.env.NODE_ENV !== "production") {
-  const appUrl = `http://localhost:${port}`;
+  const appUrl = appBaseUrl || `http://127.0.0.1:${port}`;
 
   const loadingHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Loading…</title>
     <meta http-equiv="refresh" content="15">
@@ -534,8 +544,19 @@ function startListening(attemptNum = 1) {
     // Remove the one-shot error handler now that we're listening
     httpServer.removeListener("error", errorHandler);
 
-    const url = `http://localhost:${port}`;
-    log(`serving on ${url} (listening on ${host}:${port})`);
+    const url = appBaseUrl || (host === "0.0.0.0" ? `http://127.0.0.1:${port}` : `http://${host}:${port}`);
+    log(`serving at ${url} (listening on ${host}:${port})`);
+    if (host === "0.0.0.0") {
+      const nets = os.networkInterfaces();
+      for (const name of Object.keys(nets)) {
+        for (const n of nets[name] || []) {
+          if (n.family === "IPv4" && !n.internal) {
+            log(`  On the network: http://${n.address}:${port}`);
+            break;
+          }
+        }
+      }
+    }
 
     // Browser auto-open (dev only): 2s delay so port is fully bound (helps on Windows)
     if (process.env.NODE_ENV !== "production") {

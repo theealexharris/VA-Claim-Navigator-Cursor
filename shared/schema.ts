@@ -29,6 +29,8 @@ export const users = pgTable("users", {
   profileCompleted: boolean("profile_completed").default(false).notNull(),
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
+  ssn: text("ssn"),
+  vaFileNumber: text("va_file_number"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

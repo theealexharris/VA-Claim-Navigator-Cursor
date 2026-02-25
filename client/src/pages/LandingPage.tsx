@@ -30,7 +30,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { CONTACT_EMAIL_ADMIN } from "@/lib/contact";
 import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
-import { authFetch } from "@/lib/api-helpers";
+import { authFetch, apiUrl } from "@/lib/api-helpers";
 import heroVideo from "@assets/Claim_navigator_video_1768853413666.mp4";
 import avatar1 from "@assets/stock_images/diverse_professional_43b32cf6.jpg";
 import avatar2 from "@assets/stock_images/diverse_professional_31dd8b43.jpg";
@@ -49,7 +49,7 @@ export default function LandingPage() {
   const [showPromoPopup, setShowPromoPopup] = useState(false);
 
   useEffect(() => {
-    fetch("/api/stats/vets-served")
+    fetch(apiUrl("/api/stats/vets-served"))
       .then(res => res.json())
       .then(data => {
         if (data.count) {
@@ -83,7 +83,7 @@ export default function LandingPage() {
   const handlePaidTierClick = async (tierName: string, price: string) => {
     // Check if user is logged in first
     try {
-      const authCheck = await fetch("/api/auth/me", { credentials: "include" });
+      const authCheck = await fetch(apiUrl("/api/auth/me"), { credentials: "include" });
       const isLoggedIn = authCheck.status === 200;
       
       // Pro tier is free - go directly to profile

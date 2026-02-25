@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowRight, Loader2, Eye, EyeOff, Mail, KeyRound } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { resendVerificationEmail, verifyEmail, setAccessToken } from "@/lib/api";
+import { apiUrl } from "@/lib/api-helpers";
 
 type AuthView = "login" | "signup" | "verify-email";
 
@@ -39,10 +40,10 @@ export default function AuthPage() {
   const [authConfigError, setAuthConfigError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${typeof window !== "undefined" ? window.location.origin : ""}/api/auth/status`)
+    fetch(apiUrl("/api/auth/status"))
       .then((r) => r.json())
       .then((d) => setAuthConfigError(d.error ?? null))
-      .catch(() => setAuthConfigError("Could not reach the server. Ensure the backend is running (npm run dev) and you're using the correct URL (e.g. http://localhost:5000)."));
+      .catch(() => setAuthConfigError("Could not reach the server. Ensure you're using https://vaclaimnavigator.com and the backend is running."));
   }, []);
 
   // Sync view when URL changes; set Deluxe pending when user lands on signup with tier=deluxe
@@ -76,7 +77,7 @@ export default function AuthPage() {
     }
   }, []);
 
-  // After successful login or signup – full redirect so URL bar shows correct origin (e.g. localhost:5000)
+  // After successful login or signup – full redirect so URL bar shows correct origin (e.g. vaclaimnavigator.com)
   function navigateAfterAuth() {
     const urlParams = new URLSearchParams(window.location.search);
     const tierParam = urlParams.get("tier");
@@ -441,9 +442,9 @@ export default function AuthPage() {
               {isLogin ? "Sign up" : "Log in"}
             </Link>
           </p>
-          {typeof window !== "undefined" && window.location.port !== "5000" && (
+          {typeof window !== "undefined" && !window.location.hostname.includes("vaclaimnavigator.com") && (
             <p className="text-xs text-muted-foreground/80">
-              For local dev, use <a href="http://localhost:5000" className="text-primary underline">http://localhost:5000</a>
+              Use the official site: <a href="https://vaclaimnavigator.com" className="text-primary underline">https://vaclaimnavigator.com</a>
             </p>
           )}
         </CardFooter>

@@ -9,7 +9,7 @@ import { Bell, Shield, CreditCard, Check, Crown, Eye, EyeOff, Trash2, AlertTrian
 import { useToast } from "@/hooks/use-toast";
 import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import { PROMO_ACTIVE } from "@/hooks/use-subscription";
-import { authFetch } from "@/lib/api-helpers";
+import { authFetch, apiUrl } from "@/lib/api-helpers";
 import {
   Dialog,
   DialogContent,
@@ -75,7 +75,7 @@ export default function Settings() {
     if (infoComplete === "true") {
       setPersonalInfoComplete(true);
     }
-    fetch("/api/stripe/status", { credentials: "include" })
+    fetch(apiUrl("/api/stripe/status"), { credentials: "include" })
       .then((r) => r.json())
       .then((data) => setStripeStatus(data))
       .catch(() => setStripeStatus({ connected: false }));

@@ -4,6 +4,23 @@
  */
 
 const ACCESS_TOKEN_KEY = "insforge_access_token";
+
+// ── API Base URL (for production e.g. Vercel frontend → separate backend) ───
+
+/** Base URL for API requests. Set VITE_API_URL in production (e.g. backend on Railway). Omit for same-origin (dev). */
+export function getApiBase(): string {
+  if (typeof window === "undefined") return "";
+  const env = (import.meta.env?.VITE_API_URL ?? "").toString().trim();
+  if (env) return env.replace(/\/$/, "");
+  return window.location?.origin ?? "";
+}
+
+/** Full URL for an API path (e.g. "/api/auth/me" → "https://api.example.com/api/auth/me" or same-origin). */
+export function apiUrl(path: string): string {
+  const base = getApiBase();
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return base ? `${base}${p}` : p;
+}
 const REFRESH_TOKEN_KEY = "insforge_refresh_token";
 
 // ── Access Token ──────────────────────────────────────────────────────────
@@ -74,7 +91,7 @@ async function tryRefreshToken(): Promise<boolean> {
 
   refreshInFlight = (async () => {
     try {
-      const res = await fetch("/api/auth/refresh", {
+      const res = await fetch(apiUrl("/api/auth/refresh"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refreshToken: rt }),
@@ -128,7 +145,8 @@ export async function authFetch(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  let response = await fetch(url, {
+  const fullUrl = url.startsWith("http") ? url : apiUrl(url);
+  let response = await fetch(fullUrl, {
     ...options,
     headers,
     credentials: "include",
@@ -146,7 +164,7 @@ export async function authFetch(
       if (newToken) {
         retryHeaders.set("Authorization", `Bearer ${newToken}`);
       }
-      response = await fetch(url, {
+      response = await fetch(fullUrl, {
         ...options,
         headers: retryHeaders,
         credentials: "include",

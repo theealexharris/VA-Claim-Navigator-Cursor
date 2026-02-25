@@ -353,9 +353,9 @@ export default function ClaimBuilder() {
       const savedEvidence = localStorage.getItem("claimBuilderEvidence");
       if (saved) {
         const parsed: Condition[] = JSON.parse(saved);
-        const normalized = parsed.map((c) => ({
+        const normalized: Condition[] = parsed.map((c) => ({
           ...c,
-          connectionType: c.connectionType === "secondary" ? "secondary" : "direct",
+          connectionType: (c.connectionType === "secondary" ? "secondary" : "direct") as "direct" | "secondary",
         }));
         setConditions(normalized);
         if (normalized.length > 0 && JSON.stringify(normalized) !== saved) {
@@ -902,7 +902,8 @@ export default function ClaimBuilder() {
       // If server returned 503 or 401 (e.g. invalid token / config), retry once without auth so analysis can still run when anon key is valid
       if ((res.status === 503 || res.status === 401) && (await import("../lib/api-helpers")).getAccessToken()) {
         try {
-          const fallback = await fetch("/api/ai/analyze-medical-records", {
+          const { apiUrl } = await import("../lib/api-helpers");
+          const fallback = await fetch(apiUrl("/api/ai/analyze-medical-records"), {
             ...baseOpts,
             headers: { "Content-Type": "application/json" },
             credentials: "include",

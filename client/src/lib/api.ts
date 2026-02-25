@@ -2,19 +2,13 @@ import type { User, ServiceHistory, MedicalCondition, Claim, LayStatement, Buddy
 import {
   getAccessToken, setAccessToken, removeAccessToken,
   setRefreshToken, removeRefreshToken,
-  authFetch
+  authFetch,
+  getApiBase,
+  apiUrl
 } from "./api-helpers";
 
 // Re-export for convenience
-export { getAccessToken, setAccessToken, removeAccessToken, removeRefreshToken };
-
-/** Base URL for API requests. Uses current origin so auth works and URL bar stays correct (e.g. localhost:5000). */
-function apiBase(): string {
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return window.location.origin;
-  }
-  return "";
-}
+export { getAccessToken, setAccessToken, removeAccessToken, removeRefreshToken, getApiBase, apiUrl };
 
 /**
  * Safely parse JSON from a response, handling empty or invalid JSON
@@ -36,7 +30,7 @@ async function safeJsonParse(response: Response): Promise<any> {
 export async function register(email: string, password: string, firstName?: string, lastName?: string) {
   let res: Response;
   try {
-    res = await fetch(`${apiBase()}/api/auth/register`, {
+    res = await fetch(apiUrl("/api/auth/register"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, firstName: firstName ?? "", lastName: lastName ?? "" }),
@@ -47,7 +41,7 @@ export async function register(email: string, password: string, firstName?: stri
     const isFetchFailed = /failed to fetch|fetch failed|networkerror|load failed/i.test(msg);
     throw new Error(
       isFetchFailed
-        ? "Cannot reach the server. Use http://localhost:5000 in your browser and ensure the dev server is running."
+        ? "Cannot reach the server. Use https://vaclaimnavigator.com and ensure the backend is running."
         : "Unable to reach the server. Check your connection and try again."
     );
   }
@@ -80,7 +74,7 @@ export async function register(email: string, password: string, firstName?: stri
 export async function login(email: string, password: string) {
   let res: Response;
   try {
-    res = await fetch(`${apiBase()}/api/auth/login`, {
+    res = await fetch(apiUrl("/api/auth/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
@@ -91,7 +85,7 @@ export async function login(email: string, password: string) {
     const isFetchFailed = /failed to fetch|fetch failed|networkerror|load failed/i.test(msg);
     throw new Error(
       isFetchFailed
-        ? "Cannot reach the server. Use http://localhost:5000 and ensure the dev server is running."
+        ? "Cannot reach the server. Use the app URL and ensure the backend is running."
         : "Unable to reach the server. Check your connection and try again."
     );
   }
@@ -136,14 +130,14 @@ export async function login(email: string, password: string) {
 export async function verifyEmail(email: string, code: string) {
   let res: Response;
   try {
-    res = await fetch(`${apiBase()}/api/auth/verify-email`, {
+    res = await fetch(apiUrl("/api/auth/verify-email"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, code }),
       credentials: "include",
     });
   } catch (networkErr: any) {
-    throw new Error("Cannot reach the server. Use http://localhost:5000 and ensure the dev server is running.");
+    throw new Error("Cannot reach the server. Ensure the backend is running.");
   }
   const data = await safeJsonParse(res);
   if (!res.ok) {
@@ -157,7 +151,7 @@ export async function verifyEmail(email: string, code: string) {
 }
 
 export async function resendVerificationEmail(email: string): Promise<{ success: boolean; message: string }> {
-  const res = await fetch("/api/auth/resend-verification", {
+  const res = await fetch(apiUrl("/api/auth/resend-verification"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
@@ -177,7 +171,7 @@ export async function logout() {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  const res = await fetch("/api/auth/logout", {
+  const res = await fetch(apiUrl("/api/auth/logout"), {
     method: "POST",
     headers,
     credentials: "include",

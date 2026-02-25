@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { apiUrl } from "@/lib/api-helpers";
 
 export type StripePriceIds = {
   pro: string | null;
@@ -7,7 +8,7 @@ export type StripePriceIds = {
 };
 
 async function fetchPriceIds(): Promise<StripePriceIds> {
-  const res = await fetch("/api/stripe/price-ids", { credentials: "include" });
+  const res = await fetch(apiUrl("/api/stripe/price-ids"), { credentials: "include" });
   if (!res.ok) return { pro: null, deluxe: null, business: null };
   const data = await res.json();
   return {

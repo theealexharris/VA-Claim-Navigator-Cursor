@@ -28,7 +28,7 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    host: "localhost",
+    host: "0.0.0.0",
     allowedHosts: true,
     fs: {
       strict: true,
@@ -36,14 +36,14 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:5000",
+        target: process.env.VITE_PROXY_TARGET || "https://vaclaimnavigator.com",
         changeOrigin: true,
-        secure: false,
+        secure: true,
       },
       "/objects": {
-        target: "http://127.0.0.1:5000",
+        target: process.env.VITE_PROXY_TARGET || "https://vaclaimnavigator.com",
         changeOrigin: true,
-        secure: false,
+        secure: true,
       },
     },
   },
