@@ -136,14 +136,23 @@ export default function AuthPage() {
       toast({ title: "Welcome back!", description: "You've successfully logged in." });
       navigateAfterAuth();
     } catch (error: any) {
-      // Insforge returns AUTH_UNAUTHORIZED for BOTH wrong password AND unverified email.
-      // Always show the "haven't verified?" hint so the user isn't stuck.
       setShowLoginVerificationHint(true);
-      const msg = error?.message || "";
-      const isConfigMessage = /INSFORGE|\.env|not configured|restart the server/i.test(msg);
+      const msg =
+        error?.message ||
+        error?.response?.data?.message ||
+        error?.data?.message ||
+        "Sign-in failed";
+      let description: string;
+      if (/INSFORGE_ANON_KEY|INSFORGE_API_BASE_URL|authConfigured/i.test(msg)) {
+        description = msg;
+      } else if (/invalid credentials|unauthorized|401|invalid email or password/i.test(msg)) {
+        description = "Invalid email or password.";
+      } else {
+        description = msg || "Invalid email or password. If you recently signed up, make sure you've verified your email.";
+      }
       toast({
         title: "Sign-in failed",
-        description: isConfigMessage ? "Server or auth service is temporarily unavailable. Please try again later." : (msg || "Invalid email or password. If you recently signed up, make sure you've verified your email."),
+        description,
         variant: "destructive",
       });
     } finally {
@@ -184,11 +193,22 @@ export default function AuthPage() {
       toast({ title: "Account created!", description: "Welcome to VA Claim Navigator." });
       navigateAfterAuth();
     } catch (error: any) {
-      const msg = error?.message || "";
-      const isConfigMessage = /INSFORGE|\.env|not configured|restart the server/i.test(msg);
+      const msg =
+        error?.message ||
+        error?.response?.data?.message ||
+        error?.data?.message ||
+        "Could not create account. Please try again.";
+      let description: string;
+      if (/INSFORGE_ANON_KEY|INSFORGE_API_BASE_URL|authConfigured/i.test(msg)) {
+        description = msg;
+      } else if (/invalid credentials|unauthorized|401/i.test(msg)) {
+        description = "Invalid email or password.";
+      } else {
+        description = msg;
+      }
       toast({
         title: "Registration failed",
-        description: isConfigMessage ? "Server or auth service is temporarily unavailable. Please try again later." : (msg || "Could not create account. Please try again."),
+        description,
         variant: "destructive",
       });
     } finally {
