@@ -126,9 +126,11 @@ export default function AuthPage() {
       // Insforge returns AUTH_UNAUTHORIZED for BOTH wrong password AND unverified email.
       // Always show the "haven't verified?" hint so the user isn't stuck.
       setShowLoginVerificationHint(true);
+      const msg = error?.message || "";
+      const isConfigMessage = /INSFORGE|\.env|not configured|restart the server/i.test(msg);
       toast({
         title: "Sign-in failed",
-        description: error?.message || "Invalid email or password. If you recently signed up, make sure you've verified your email.",
+        description: isConfigMessage ? "Server or auth service is temporarily unavailable. Please try again later." : (msg || "Invalid email or password. If you recently signed up, make sure you've verified your email."),
         variant: "destructive",
       });
     } finally {
@@ -169,9 +171,11 @@ export default function AuthPage() {
       toast({ title: "Account created!", description: "Welcome to VA Claim Navigator." });
       navigateAfterAuth();
     } catch (error: any) {
+      const msg = error?.message || "";
+      const isConfigMessage = /INSFORGE|\.env|not configured|restart the server/i.test(msg);
       toast({
         title: "Registration failed",
-        description: error?.message || "Could not create account. Please try again.",
+        description: isConfigMessage ? "Server or auth service is temporarily unavailable. Please try again later." : (msg || "Could not create account. Please try again."),
         variant: "destructive",
       });
     } finally {

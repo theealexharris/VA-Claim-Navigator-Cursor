@@ -26,6 +26,17 @@ async function safeJsonParse(response: Response): Promise<any> {
   }
 }
 
+/** Don't show server env/config messages to end users (502/503). Browsers can't read .env; these are backend-only. */
+function sanitizeAuthServerMessage(message: string | undefined, status: number): string | undefined {
+  if (status !== 502 && status !== 503) return message;
+  const m = (message || '').trim();
+  if (!m) return undefined;
+  if (/INSFORGE|\.env|not configured|restart the server/i.test(m)) {
+    return undefined; // caller will use generic fallback
+  }
+  return m;
+}
+
 // Auth API
 export async function register(email: string, password: string, firstName?: string, lastName?: string) {
   let res: Response;
@@ -49,7 +60,12 @@ export async function register(email: string, password: string, firstName?: stri
   const data = await safeJsonParse(res);
 
   if (!res.ok) {
-    const errorMessage = data?.message || data?.error || `Registration failed (${res.status})`;
+    const raw = data?.message || data?.error || `Registration failed (${res.status})`;
+    const sanitized = sanitizeAuthServerMessage(raw, res.status);
+    const errorMessage =
+      res.status === 502 || res.status === 503
+        ? sanitized ?? "Server or auth service is temporarily unavailable. Please try again later."
+        : raw;
     throw new Error(errorMessage);
   }
 
@@ -101,9 +117,13 @@ export async function login(email: string, password: string) {
         : res.status === 403
           ? "Please verify your email to sign in."
           : res.status === 502 || res.status === 503
-            ? "Server or auth service is unavailable. Run the full app with npm run dev (not just dev:client) and try again."
+            ? "Server or auth service is temporarily unavailable. Please try again later."
             : "Login failed. Please try again.";
-    const errorMessage = typeof serverMessage === "string" && serverMessage.trim() ? serverMessage.trim() : fallback;
+    const sanitized = sanitizeAuthServerMessage(serverMessage, res.status);
+    const errorMessage =
+      res.status === 502 || res.status === 503
+        ? (sanitized && sanitized.trim() ? sanitized.trim() : fallback)
+        : (typeof serverMessage === "string" && serverMessage.trim() ? serverMessage.trim() : fallback);
     const err = new Error(errorMessage) as Error & { code?: string };
     if (code === "EMAIL_VERIFICATION_REQUIRED") err.code = code;
     throw err;
