@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowRight, Loader2, Eye, EyeOff, Mail, KeyRound } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { resendVerificationEmail, verifyEmail, setAccessToken } from "@/lib/api";
-import { apiUrl } from "@/lib/api-helpers";
+import { apiUrl, isAuthConfiguredFromEnv } from "@/lib/api-helpers";
 
 type AuthView = "login" | "signup" | "verify-email";
 
@@ -42,7 +42,20 @@ export default function AuthPage() {
   useEffect(() => {
     fetch(apiUrl("/api/auth/status"))
       .then((r) => r.json())
-      .then((d) => setAuthConfigError(d.error ?? null))
+      .then((d) => {
+        const serverError = d.error ?? null;
+        if (!serverError) {
+          setAuthConfigError(null);
+          return;
+        }
+        // Don't show server "set INSFORGE_* in .env" when frontend has Vite env configured (browser uses Vite env, not process.env)
+        const isConfigMessage = /INSFORGE|\.env|not configured|restart the server/i.test(serverError);
+        if (isConfigMessage && isAuthConfiguredFromEnv()) {
+          setAuthConfigError(null);
+          return;
+        }
+        setAuthConfigError(serverError);
+      })
       .catch(() => setAuthConfigError("Could not reach the server. Ensure you're using https://vaclaimnavigator.com and the backend is running."));
   }, []);
 
