@@ -15,7 +15,7 @@ export function getApiBase(): string {
   return window.location?.origin ?? "";
 }
 
-/** Insforge backend base URL. Use VITE_INSFORGE_API_BASE_URL (not VITE_API_URL). Only available in browser. */
+/** Insforge backend base URL. Use VITE_INSFORGE_API_BASE_URL (not VITE_API_URL) for Insforge auth. Any Insforge client in the frontend must use import.meta.env.VITE_INSFORGE_* (not process.env). */
 export function getInsforgeApiBase(): string {
   if (typeof window === "undefined") return "";
   return (import.meta.env?.VITE_INSFORGE_API_BASE_URL ?? "").toString().trim().replace(/\/$/, "");
