@@ -402,6 +402,7 @@ export async function registerRoutes(
       await resendVerification(email.trim());
       res.json({ success: true, message: "If an account exists, a new verification code has been sent." });
     } catch (error: any) {
+      console.error("[resend-verification] Insforge error:", error?.message || error, error?.errorCode || "");
       if (!res.headersSent) {
         // Still return success to prevent user enumeration
         res.json({ success: true, message: "If an account exists, a new verification code has been sent." });
