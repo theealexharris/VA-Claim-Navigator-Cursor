@@ -368,6 +368,11 @@ export default function MedicalHistory() {
               <CardTitle className="text-xl">Current Diagnoses</CardTitle>
             </CardHeader>
             <CardContent>
+              {isServiceConnected === "no" ? (
+                <p className="text-muted-foreground text-center py-6">
+                  Select "Yes" above to view and manage your current diagnoses.
+                </p>
+              ) : (
               <div className="space-y-4">
                 {conditions.map((condition) => (
                   <div key={condition.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
@@ -456,6 +461,7 @@ export default function MedicalHistory() {
                   <p className="text-center text-muted-foreground py-4 text-base">No conditions added yet.</p>
                 )}
               </div>
+              )}
             </CardContent>
           </Card>
 

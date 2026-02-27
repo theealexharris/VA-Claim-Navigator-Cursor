@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useStripePriceIds } from "@/hooks/use-stripe-price-ids";
 import { Loader2, CheckCircle2, ChevronLeft } from "lucide-react";
@@ -33,6 +34,15 @@ export default function Profile() {
   const { getPriceId } = useStripePriceIds();
   const [, setLocation] = useLocation();
   const [isSaving, setIsSaving] = useState(false);
+  const [showSSNWarning, setShowSSNWarning] = useState(false);
+
+  const handleSSNFocus = useCallback(() => {
+    if (!sessionStorage.getItem("ssnWarningShown")) {
+      setShowSSNWarning(true);
+      sessionStorage.setItem("ssnWarningShown", "1");
+    }
+  }, []);
+
   const [formData, setFormData] = useState<ProfileData>({
     firstName: "",
     lastName: "",
@@ -351,10 +361,11 @@ export default function Profile() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="text-base">Social Security Number (SSN)</Label>
-                <Input 
+                <Input
                   value={formData.ssn}
                   onChange={(e) => handleInputChange("ssn", e.target.value)}
                   onBlur={handleSSNBlur}
+                  onFocus={handleSSNFocus}
                   placeholder="XXX-XX-XXXX"
                   className={`text-base ${formData.ssn ? "font-bold" : ""}`}
                   data-testid="input-profile-ssn"
@@ -445,6 +456,25 @@ export default function Profile() {
           </CardContent>
         </Card>
       </div>
+      {/* SSN HIPAA Warning Popup */}
+      <Dialog open={showSSNWarning} onOpenChange={setShowSSNWarning}>
+        <DialogContent className="border-4 border-red-500 max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 text-xl">HIPAA Protection Notice</DialogTitle>
+            <DialogDescription className="text-base text-foreground pt-2">
+              For HIPAA Protection and Safety, your SSN and/or any records uploaded will not be saved or kept in the database after you log off and/or close the navigator.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-center pt-4">
+            <Button
+              onClick={() => setShowSSNWarning(false)}
+              className="bg-red-600 hover:bg-red-700 text-white px-8"
+            >
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

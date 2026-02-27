@@ -22,6 +22,7 @@ import {
 import { ContactUsDialog } from "@/components/ContactUsDialog";
 import { CONTACT_EMAIL_ADMIN, FEEDBACK_EMAIL } from "@/lib/contact";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { 
@@ -57,6 +58,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [userName, setUserName] = useState({ firstName: "", lastName: "" });
   const [userRole, setUserRole] = useState<string>("user");
   const [workflowProgress, setWorkflowProgress] = useState(getWorkflowProgress());
+  const [showSessionWarning, setShowSessionWarning] = useState(false);
   
   const [isProfileOpen, setIsProfileOpen] = useState(location.includes('profile') || location.includes('history'));
   const isAdmin = userRole === "admin";
@@ -75,6 +77,13 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
     window.addEventListener("sessionExpired", handleSessionExpired);
     return () => window.removeEventListener("sessionExpired", handleSessionExpired);
   }, [handleSessionExpired]);
+
+  // 10-minute session warning popup
+  useEffect(() => {
+    const handleSessionWarning = () => setShowSessionWarning(true);
+    window.addEventListener("sessionWarning", handleSessionWarning);
+    return () => window.removeEventListener("sessionWarning", handleSessionWarning);
+  }, []);
 
   const capitalizeFirstLetter = (str: string) => {
     if (!str) return str;
@@ -306,6 +315,26 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      {/* 10-minute session timeout warning */}
+      <Dialog open={showSessionWarning} onOpenChange={setShowSessionWarning}>
+        <DialogContent className="border-4 border-red-500 max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 text-xl">Session Timeout Warning</DialogTitle>
+            <DialogDescription className="text-base text-foreground pt-2">
+              You have 10 minutes remaining before automatic log-off. Please save any work in progress.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-center pt-4">
+            <Button
+              onClick={() => setShowSessionWarning(false)}
+              className="bg-red-600 hover:bg-red-700 text-white px-8"
+            >
+              OK
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

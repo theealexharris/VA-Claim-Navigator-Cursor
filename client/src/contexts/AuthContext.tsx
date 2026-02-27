@@ -1,8 +1,10 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from "react";
 import { getCurrentUser, login as apiLogin, logout as apiLogout, register as apiRegister, removeAccessToken, removeRefreshToken } from "../lib/api";
+import { authFetch } from "../lib/api-helpers";
 import type { User } from "@shared/schema";
 
 const SESSION_DURATION_MS = 60 * 60 * 1000; // 60 minutes
+const SESSION_WARNING_MS = 10 * 60 * 1000; // warn 10 minutes before expiry
 
 interface AuthContextType {
   user: User | null;
@@ -14,10 +16,42 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/** Keys to clear for HIPAA-sensitive data (SSN, evidence, documents) */
+const SENSITIVE_KEYS = [
+  "claimBuilderConditions",
+  "claimBuilderEvidence",
+  "generatedMemorandum",
+];
+
+/** All user-specific keys (cleared on logout and session expiry) */
+const ALL_USER_KEYS = [
+  "userProfile", "serviceHistory", "medicalConditions",
+  ...SENSITIVE_KEYS,
+  "layStatements", "buddyStatements", "serviceConnectedPercentage",
+  "personalInfoComplete", "serviceHistoryComplete", "medicalConditionsComplete",
+  "previousClaimEnded", "showOnboarding", "selectedTier",
+  "pendingDeluxePayment", "paymentComplete", "loginTimestamp"
+];
+
+/** Clear SSN from userProfile in localStorage */
+function clearSSNFromStorage() {
+  try {
+    const raw = localStorage.getItem("userProfile");
+    if (raw) {
+      const profile = JSON.parse(raw);
+      if (profile.ssn) {
+        profile.ssn = "";
+        localStorage.setItem("userProfile", JSON.stringify(profile));
+      }
+    }
+  } catch (_) {}
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const sessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Clear any existing session timer
   const clearSessionTimer = useCallback(() => {
@@ -25,9 +59,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(sessionTimerRef.current);
       sessionTimerRef.current = null;
     }
+    if (warningTimerRef.current) {
+      clearTimeout(warningTimerRef.current);
+      warningTimerRef.current = null;
+    }
   }, []);
 
-  // Start (or restart) the 60-minute session expiry timer
+  // Start (or restart) the 60-minute session expiry timer + 10-minute warning
   const startSessionTimer = useCallback(() => {
     clearSessionTimer();
     const loginTime = localStorage.getItem("loginTimestamp");
@@ -41,6 +79,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // Set the 10-minute warning timer
+    const warningAt = remaining - SESSION_WARNING_MS;
+    if (warningAt > 0) {
+      warningTimerRef.current = setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("sessionWarning"));
+      }, warningAt);
+    }
+
     sessionTimerRef.current = setTimeout(() => {
       handleSessionExpired();
     }, remaining);
@@ -50,16 +96,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     removeAccessToken();
     removeRefreshToken();
     setUser(null);
-    // Clear user data but preserve claim builder and evidence so re-login restores Evidence for Claims and AI can re-analyze
-    const keysToRemove = [
-      "userProfile", "serviceHistory", "medicalConditions",
-      "layStatements", "buddyStatements", "serviceConnectedPercentage",
-      "personalInfoComplete", "serviceHistoryComplete", "medicalConditionsComplete",
-      "previousClaimEnded", "showOnboarding", "selectedTier",
-      "pendingDeluxePayment", "paymentComplete", "loginTimestamp"
-    ];
-    keysToRemove.forEach(key => localStorage.removeItem(key));
-    // Keep claimBuilderConditions, claimBuilderEvidence, generatedMemorandum so uploads and claim progress persist
+    // Clear ALL user data including sensitive SSN and evidence (HIPAA)
+    ALL_USER_KEYS.forEach(key => localStorage.removeItem(key));
+    clearSSNFromStorage();
 
     window.dispatchEvent(new CustomEvent("sessionExpired"));
   }
@@ -71,12 +110,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       removeAccessToken();
       removeRefreshToken();
       setUser(null);
-      // Do NOT clear claimBuilderEvidence, claimBuilderConditions, generatedMemorandum so Evidence for Claims and claim stay intact
       window.dispatchEvent(new CustomEvent("sessionExpired", { detail: { soft: true } }));
     };
     window.addEventListener("authRequired", onAuthRequired);
     return () => window.removeEventListener("authRequired", onAuthRequired);
   }, [clearSessionTimer]);
+
+  // Clear sensitive data on browser/tab close (HIPAA protection)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      clearSSNFromStorage();
+      SENSITIVE_KEYS.forEach(key => localStorage.removeItem(key));
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   useEffect(() => {
     checkAuth();
@@ -142,31 +190,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function logout() {
     clearSessionTimer();
+
+    // Clear SSN from server database (HIPAA)
+    try {
+      await authFetch("/api/users/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ ssn: "" }),
+      });
+    } catch (_) { /* best-effort */ }
+
     await apiLogout();
     setUser(null);
-    
-    // Clear all user-specific data on logout to prevent data leakage
-    const keysToRemove = [
-      "userProfile",
-      "serviceHistory",
-      "medicalConditions", 
-      "claimBuilderConditions",
-      "claimBuilderEvidence",
-      "generatedMemorandum",
-      "layStatements",
-      "buddyStatements",
-      "serviceConnectedPercentage",
-      "personalInfoComplete",
-      "serviceHistoryComplete",
-      "medicalConditionsComplete",
-      "previousClaimEnded",
-      "showOnboarding",
-      "selectedTier",
-      "pendingDeluxePayment",
-      "paymentComplete",
-      "loginTimestamp"
-    ];
-    keysToRemove.forEach(key => localStorage.removeItem(key));
+
+    // Clear all user-specific data on logout to prevent data leakage (HIPAA)
+    ALL_USER_KEYS.forEach(key => localStorage.removeItem(key));
   }
 
   return (

@@ -278,10 +278,13 @@ export default function LandingPage() {
             </div>
             
             <div className="relative rounded-2xl overflow-hidden shadow-2xl shadow-primary/20 border-4 border-white transform rotate-2 hover:rotate-0 transition-transform duration-500 flex justify-center">
-              <video 
+              <video
                 ref={videoRef}
                 src={heroVideo}
                 playsInline
+                autoPlay
+                muted
+                loop
                 controls
                 className="max-h-[600px] w-auto rounded-xl"
                 data-testid="video-hero"

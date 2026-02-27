@@ -941,9 +941,26 @@ export default function ClaimBuilder() {
       if (diagnoses && diagnoses.length > 0) {
         setEvidenceAnalysisState(evidenceId, "complete");
         ensureClaimStarted();
-        const newConditions: Condition[] = (diagnoses as { conditionName: string; onsetDate?: string; connectionType?: string; isPresumptive?: boolean; pageNumber?: string }[]).map((d) => ({
+        // Filter out meaningless condition names the AI may return
+        const SKIP_CONDITION_NAMES = ["NO MEDICAL CONDITIONS DOCUMENTED", "NO MEDICAL CONDITIONS", "NONE", "N/A", "UNKNOWN", "CONDITION", "NO CONDITIONS FOUND", "NOT FOUND"];
+        const validDiagnoses = (diagnoses as { conditionName: string; onsetDate?: string; connectionType?: string; isPresumptive?: boolean; pageNumber?: string }[]).filter(d => {
+          const name = (d.conditionName || "").toUpperCase().trim();
+          return name && !SKIP_CONDITION_NAMES.includes(name);
+        });
+
+        if (validDiagnoses.length === 0) {
+          // All diagnoses were filtered out — treat as no conditions found
+          setEvidenceAnalysisState(evidenceId, "complete");
+          toast({
+            title: "Analysis Complete",
+            description: "No VA-claimable diagnoses were found in this document. You can add conditions manually in the next step.",
+          });
+          return;
+        }
+
+        const newConditions: Condition[] = validDiagnoses.map((d) => ({
           id: `cond-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          name: (d.conditionName || "").toUpperCase().trim() || "Condition",
+          name: (d.conditionName || "").toUpperCase().trim(),
           onsetDate: d.onsetDate || "",
           frequency: "constant",
           symptoms: [],
@@ -1105,26 +1122,39 @@ export default function ClaimBuilder() {
       const categorizedEvidence = categorizeEvidence(allEvidence);
 
       const { authFetch } = await import("../lib/api-helpers");
-      const response = await authFetch("/api/ai/generate-claim-memorandum", {
-        method: "POST",
-        body: JSON.stringify({
-          veteranName: fullName,
-          ssn: ssnFormatted,
-          phone: profile.phone || "",
-          email: profile.email || "",
-          branch: branchName,
-          conditions: conditions.map(c => ({
-            name: c.name,
-            onsetDate: c.onsetDate,
-            frequency: c.frequency,
-            symptoms: c.symptoms,
-            connectionType: c.connectionType,
-            isPresumptive: c.isPresumptive,
-            dailyImpact: c.dailyImpact
-          })),
-          evidence: categorizedEvidence
-        })
+      const requestBody = JSON.stringify({
+        veteranName: fullName,
+        ssn: ssnFormatted,
+        phone: profile.phone || "",
+        email: profile.email || "",
+        branch: branchName,
+        conditions: conditions.map(c => ({
+          name: c.name,
+          onsetDate: c.onsetDate,
+          frequency: c.frequency,
+          symptoms: c.symptoms,
+          connectionType: c.connectionType,
+          isPresumptive: c.isPresumptive,
+          dailyImpact: c.dailyImpact
+        })),
+        evidence: categorizedEvidence
       });
+
+      // Try generation with one automatic retry on failure
+      let response = await authFetch("/api/ai/generate-claim-memorandum", {
+        method: "POST",
+        body: requestBody
+      });
+
+      if (!response.ok) {
+        // Automatic retry once
+        setProcessingPhase("Retrying generation...");
+        await new Promise(r => setTimeout(r, 2000));
+        response = await authFetch("/api/ai/generate-claim-memorandum", {
+          method: "POST",
+          body: requestBody
+        });
+      }
 
       if (response.ok) {
         const data = await response.json();
@@ -1141,17 +1171,28 @@ export default function ClaimBuilder() {
           toast({ title: "Support Statement Ready", description: "Your Support Statement has been generated. Review below and use Print or Download PDF when ready." });
         }, 1000);
       } else {
-        // If API fails, show error and stay on current step
+        // Parse error for a more helpful message
+        let errorMsg = "Unable to generate your claim statement.";
+        try {
+          const errData = await response.json();
+          const msg = (errData?.message || "").toLowerCase();
+          if (msg.includes("credit") || msg.includes("quota")) {
+            errorMsg = "The AI service is temporarily at capacity. Please try again in a few minutes.";
+          } else if (msg.includes("timeout") || msg.includes("gateway")) {
+            errorMsg = "The request timed out. Please try again.";
+          }
+        } catch (_) {}
+
         clearInterval(progressInterval);
         setIsProcessingClaim(false);
         setProcessingProgress(0);
         setProcessingPhase("Initializing deep dive analysis...");
         localStorage.removeItem("generatedMemorandum");
         setGeneratedMemorandum("");
-        toast({ 
-          title: "Generation Failed", 
-          description: "Unable to generate your claim statement. You can still proceed with the template or try again.", 
-          variant: "destructive" 
+        toast({
+          title: "Generation Failed",
+          description: `${errorMsg} You can still proceed with the template or try again.`,
+          variant: "destructive"
         });
         // Still advance to step 4 to show the template fallback
         setCurrentStep(4);
