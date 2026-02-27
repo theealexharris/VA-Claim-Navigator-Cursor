@@ -954,7 +954,9 @@ export default function ClaimBuilder() {
           sourcePage: (d.pageNumber && String(d.pageNumber).trim()) || undefined,
         }));
         setConditions(prev => {
-          const next = [...prev, ...newConditions];
+          // Remove empty/unnamed default conditions when AI extracted real diagnoses
+          const nonEmpty = prev.filter(c => c.name.trim() !== "");
+          const next = [...nonEmpty, ...newConditions];
           saveConditions(next);
           setActiveConditionIndex(next.length - 1);
           return next;
