@@ -18,8 +18,9 @@ async function getCredentials() {
   if (!rawPk || !rawSk) {
     throw new Error('STRIPE_PUBLISHABLE_KEY and STRIPE_SECRET_KEY must be set in .env (get keys from https://dashboard.stripe.com/apikeys)');
   }
-  if (!rawPk.startsWith('pk_') || (!rawSk.startsWith('sk_live_') && !rawSk.startsWith('sk_test_'))) {
-    throw new Error('Invalid Stripe API keys: publishable key must start with pk_, secret key with sk_live_ or sk_test_. Update .env with keys from https://dashboard.stripe.com/apikeys');
+  const validSecretPrefix = rawSk.startsWith('sk_live_') || rawSk.startsWith('sk_test_') || rawSk.startsWith('rk_live_') || rawSk.startsWith('rk_test_');
+  if (!rawPk.startsWith('pk_') || !validSecretPrefix) {
+    throw new Error('Invalid Stripe API keys: publishable key must start with pk_, secret key with sk_live_, sk_test_, rk_live_, or rk_test_. Update .env with keys from https://dashboard.stripe.com/apikeys');
   }
   if (isPlaceholderKey(rawPk) || isPlaceholderKey(rawSk)) {
     throw new Error('Stripe keys in .env look like placeholders. Replace with your real keys from https://dashboard.stripe.com/apikeys');
