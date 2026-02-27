@@ -34,7 +34,9 @@ export class WebhookHandlers {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
         const userId = session.metadata?.userId;
-        const tier = (session.metadata?.tier as string) || 'pro';
+        const rawTier = (session.metadata?.tier as string) || 'pro';
+        const validTiers = ['starter', 'pro', 'deluxe', 'business'];
+        const tier = validTiers.includes(rawTier) ? rawTier : 'pro';
         if (userId) {
           try {
             await storage.updateUser(userId, {

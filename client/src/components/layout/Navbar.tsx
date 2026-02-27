@@ -23,7 +23,7 @@ export function Navbar() {
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 font-serif font-bold text-3xl text-primary">
           <img src="/favicon.png" alt="VA Claim Navigator" className="h-8 w-8 object-contain" />
-          <span>VA Claim Navigator</span>
+          <span>VA Claim Navigator<sup className="text-xs align-super">™</sup></span>
         </Link>
 
         {/* Desktop Nav */}

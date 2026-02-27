@@ -28,7 +28,7 @@ export function Footer() {
           <div className="col-span-1 md:col-span-2">
             <div className="flex items-center gap-2 font-serif font-bold text-xl mb-4 text-white">
               <Shield className="h-8 w-8 text-secondary fill-secondary/20" />
-              <span>VA Claim Navigator</span>
+              <span>VA Claim Navigator<sup className="text-xs align-super">™</sup></span>
             </div>
             <p className="text-primary-foreground/80 max-w-sm leading-relaxed">
               Empowering veterans to file accurate, complete, and confident disability claims. 
@@ -66,7 +66,10 @@ export function Footer() {
         
         <div className="pt-8 border-t border-primary-foreground/10 flex flex-col md:flex-row justify-center items-center">
           <p className="text-sm text-primary-foreground/60">
-            © {new Date().getFullYear()} VA Claim Navigator. Not affiliated with the Department of Veterans Affairs.
+            © {new Date().getFullYear()} VA Claim Navigator™. Not affiliated with the Department of Veterans Affairs.
+          </p>
+          <p className="text-sm text-primary-foreground/60 mt-1">
+            Owned and operated by Pinnacle AI Consulting™
           </p>
         </div>
       </div>

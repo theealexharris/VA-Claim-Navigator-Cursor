@@ -702,7 +702,8 @@ export default function ClaimBuilder() {
         handleFileUpload(evidenceId, file.name, undefined, file.type, resolvedObjectPath, serverFilePath);
 
         const evidenceItem = allEvidence.find((e) => e.id === evidenceId);
-        runMedicalRecordsAnalysis(evidenceId, file, evidenceItem?.type || "Medical Records", serverFilePath);
+        runMedicalRecordsAnalysis(evidenceId, file, evidenceItem?.type || "Medical Records", serverFilePath)
+          .catch((err) => console.error("[Analysis] Background analysis failed:", err));
       } catch (error: any) {
         console.error("Upload error:", error);
         toast({
@@ -2212,7 +2213,7 @@ export default function ClaimBuilder() {
                             </p>
                           </div>
                           <div className="bg-secondary/5 p-5 rounded-lg border border-secondary/30 text-center">
-                            <p className="font-bold text-base text-primary mb-2">VA Claim Navigator Support</p>
+                            <p className="font-bold text-base text-primary mb-2">VA Claim Navigator™ Support</p>
                             <a
                               href={`mailto:${CONTACT_EMAIL_ADMIN}`}
                               className="inline-flex items-center gap-2 text-base font-medium text-secondary hover:text-secondary/80 underline underline-offset-2"

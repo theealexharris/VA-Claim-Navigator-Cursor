@@ -132,7 +132,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
     <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
       <div className="p-6 flex items-center gap-3 border-b border-sidebar-border">
         <img src="/favicon.png" alt="VA Claim Navigator" className="h-8 w-8 object-contain shrink-0" />
-        <span className="font-serif font-bold text-lg text-white">Claim Navigator</span>
+        <span className="font-serif font-bold text-lg text-white">Claim Navigator<sup className="text-xs align-super">™</sup></span>
       </div>
       
       <div className="flex-1 py-6 px-4 space-y-1 overflow-y-auto">

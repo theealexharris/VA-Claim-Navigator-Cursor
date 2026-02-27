@@ -166,7 +166,7 @@ export default function AuthPage() {
         phone: "", address: "", city: "", state: "", zipCode: "", ssn: "", vaFileNumber: "",
       }));
       localStorage.setItem("showOnboarding", "true");
-      toast({ title: "Account created!", description: "Welcome to VA Claim Navigator." });
+      toast({ title: "Account created!", description: "Welcome to VA Claim Navigator™." });
       navigateAfterAuth();
     } catch (error: any) {
       toast({
@@ -196,7 +196,7 @@ export default function AuthPage() {
       }));
       localStorage.setItem("showOnboarding", "true");
 
-      toast({ title: "Email verified!", description: "Welcome to VA Claim Navigator." });
+      toast({ title: "Email verified!", description: "Welcome to VA Claim Navigator™." });
 
       // If they chose Deluxe, send them to profile to complete then pay $499
       const pendingDeluxe = localStorage.getItem("pendingDeluxePayment");

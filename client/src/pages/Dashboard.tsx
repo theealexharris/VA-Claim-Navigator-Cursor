@@ -427,7 +427,7 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle className="text-2xl font-serif text-primary flex items-center gap-2">
               <Sparkles className="h-6 w-6 text-secondary" />
-              {onboardingStep === 0 && "Welcome to VA Claim Navigator!"}
+              {onboardingStep === 0 && "Welcome to VA Claim Navigator™!"}
               {onboardingStep === 1 && "Step 1: Complete Your Profile"}
               {onboardingStep === 2 && "Step 2: Add Service History"}
               {onboardingStep === 3 && "Step 3: Build Your Claim"}
@@ -443,7 +443,7 @@ export default function Dashboard() {
             {onboardingStep === 0 && (
               <div className="space-y-4">
                 <p className="text-base text-muted-foreground">
-                  Thank you for joining VA Claim Navigator! We're here to help you file your VA disability claims with confidence.
+                  Thank you for joining VA Claim Navigator™! We're here to help you file your VA disability claims with confidence.
                 </p>
                 <div className="bg-primary/5 p-4 rounded-lg border border-primary/20">
                   <p className="text-sm font-medium text-primary">

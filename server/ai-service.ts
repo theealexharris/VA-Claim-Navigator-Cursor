@@ -273,7 +273,11 @@ export async function getConditionGuidance(conditionName: string): Promise<{
 
     if (content) {
       const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-      return JSON.parse(cleaned);
+      try {
+        return JSON.parse(cleaned);
+      } catch {
+        throw new Error("AI returned malformed JSON for condition guidance");
+      }
     }
     throw new Error("No content in response");
   } catch (error) {
