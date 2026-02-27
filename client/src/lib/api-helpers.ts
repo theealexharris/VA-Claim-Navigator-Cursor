@@ -7,11 +7,13 @@ const ACCESS_TOKEN_KEY = "insforge_access_token";
 
 // ── API Base URL (for production e.g. Vercel frontend → separate backend) ───
 
-/** Base URL for API requests. Set VITE_API_URL in production (e.g. backend on Railway). Omit for same-origin (dev). */
+/**
+ * Base URL for API requests. Always uses same-origin (the Express server serves
+ * both the frontend and the API). VITE_API_URL is intentionally NOT used — the
+ * Insforge backend URL is only needed server-side (INSFORGE_API_BASE_URL).
+ */
 export function getApiBase(): string {
   if (typeof window === "undefined") return "";
-  const env = (import.meta.env?.VITE_API_URL ?? "").toString().trim();
-  if (env) return env.replace(/\/$/, "");
   return window.location?.origin ?? "";
 }
 
