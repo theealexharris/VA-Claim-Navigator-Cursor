@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowRight, Loader2, Eye, EyeOff, Mail, KeyRound } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { resendVerificationEmail, verifyEmail, setAccessToken } from "@/lib/api";
-import { apiUrl, isAuthConfiguredFromEnv } from "@/lib/api-helpers";
+import { apiUrl } from "@/lib/api-helpers";
 
 type AuthView = "login" | "signup" | "verify-email";
 
@@ -42,20 +42,7 @@ export default function AuthPage() {
   useEffect(() => {
     fetch(apiUrl("/api/auth/status"))
       .then((r) => r.json())
-      .then((d) => {
-        const serverError = d.error ?? null;
-        if (!serverError) {
-          setAuthConfigError(null);
-          return;
-        }
-        // Don't show server "set INSFORGE_* in .env" when frontend has Vite env configured (browser uses Vite env, not process.env)
-        const isConfigMessage = /INSFORGE|\.env|not configured|restart the server/i.test(serverError);
-        if (isConfigMessage && isAuthConfiguredFromEnv()) {
-          setAuthConfigError(null);
-          return;
-        }
-        setAuthConfigError(serverError);
-      })
+      .then((d) => setAuthConfigError(d.error ?? null))
       .catch(() => setAuthConfigError("Could not reach the server. Ensure you're using https://vaclaimnavigator.com and the backend is running."));
   }, []);
 
@@ -136,23 +123,12 @@ export default function AuthPage() {
       toast({ title: "Welcome back!", description: "You've successfully logged in." });
       navigateAfterAuth();
     } catch (error: any) {
+      // Insforge returns AUTH_UNAUTHORIZED for BOTH wrong password AND unverified email.
+      // Always show the "haven't verified?" hint so the user isn't stuck.
       setShowLoginVerificationHint(true);
-      const msg =
-        error?.message ||
-        error?.response?.data?.message ||
-        error?.data?.message ||
-        "Sign-in failed";
-      let description: string;
-      if (/INSFORGE_ANON_KEY|INSFORGE_API_BASE_URL|authConfigured/i.test(msg)) {
-        description = msg;
-      } else if (/invalid credentials|unauthorized|401|invalid email or password/i.test(msg)) {
-        description = "Invalid email or password.";
-      } else {
-        description = msg || "Invalid email or password. If you recently signed up, make sure you've verified your email.";
-      }
       toast({
         title: "Sign-in failed",
-        description,
+        description: error?.message || "Invalid email or password. If you recently signed up, make sure you've verified your email.",
         variant: "destructive",
       });
     } finally {
@@ -193,22 +169,9 @@ export default function AuthPage() {
       toast({ title: "Account created!", description: "Welcome to VA Claim Navigator." });
       navigateAfterAuth();
     } catch (error: any) {
-      const msg =
-        error?.message ||
-        error?.response?.data?.message ||
-        error?.data?.message ||
-        "Could not create account. Please try again.";
-      let description: string;
-      if (/INSFORGE_ANON_KEY|INSFORGE_API_BASE_URL|authConfigured/i.test(msg)) {
-        description = msg;
-      } else if (/invalid credentials|unauthorized|401/i.test(msg)) {
-        description = "Invalid email or password.";
-      } else {
-        description = msg;
-      }
       toast({
         title: "Registration failed",
-        description,
+        description: error?.message || "Could not create account. Please try again.",
         variant: "destructive",
       });
     } finally {

@@ -26,32 +26,8 @@ async function safeJsonParse(response: Response): Promise<any> {
   }
 }
 
-/** Don't show server env/config messages to end users (502/503). Browsers can't read .env; these are backend-only. */
-function sanitizeAuthServerMessage(message: string | undefined, status: number): string | undefined {
-  if (status !== 502 && status !== 503) return message;
-  const m = (message || '').trim();
-  if (!m) return undefined;
-  if (/INSFORGE|\.env|not configured|restart the server/i.test(m)) {
-    return undefined; // caller will use generic fallback
-  }
-  return m;
-}
-
-/** Frontend auth config check before login/register. Use Vite env only (do not check INSFORGE_* in the frontend). */
-function assertAuthConfigFromVite(): void {
-  const anon = import.meta.env.VITE_INSFORGE_ANON_KEY;
-  const base = import.meta.env.VITE_INSFORGE_API_BASE_URL;
-
-  if (!anon || !base) {
-    throw new Error(
-      "Auth service is not configured correctly. Set VITE_INSFORGE_ANON_KEY and VITE_INSFORGE_API_BASE_URL and redeploy."
-    );
-  }
-}
-
 // Auth API
 export async function register(email: string, password: string, firstName?: string, lastName?: string) {
-  assertAuthConfigFromVite();
   let res: Response;
   try {
     res = await fetch(apiUrl("/api/auth/register"), {
@@ -73,12 +49,7 @@ export async function register(email: string, password: string, firstName?: stri
   const data = await safeJsonParse(res);
 
   if (!res.ok) {
-    const raw = data?.message || data?.error || `Registration failed (${res.status})`;
-    const sanitized = sanitizeAuthServerMessage(raw, res.status);
-    const errorMessage =
-      res.status === 502 || res.status === 503
-        ? sanitized ?? "Server or auth service is temporarily unavailable. Please try again later."
-        : raw;
+    const errorMessage = data?.message || data?.error || `Registration failed (${res.status})`;
     throw new Error(errorMessage);
   }
 
@@ -101,7 +72,6 @@ export async function register(email: string, password: string, firstName?: stri
 }
 
 export async function login(email: string, password: string) {
-  assertAuthConfigFromVite();
   let res: Response;
   try {
     res = await fetch(apiUrl("/api/auth/login"), {
@@ -131,13 +101,9 @@ export async function login(email: string, password: string) {
         : res.status === 403
           ? "Please verify your email to sign in."
           : res.status === 502 || res.status === 503
-            ? "Server or auth service is temporarily unavailable. Please try again later."
+            ? "Server or auth service is unavailable. Run the full app with npm run dev (not just dev:client) and try again."
             : "Login failed. Please try again.";
-    const sanitized = sanitizeAuthServerMessage(serverMessage, res.status);
-    const errorMessage =
-      res.status === 502 || res.status === 503
-        ? (sanitized && sanitized.trim() ? sanitized.trim() : fallback)
-        : (typeof serverMessage === "string" && serverMessage.trim() ? serverMessage.trim() : fallback);
+    const errorMessage = typeof serverMessage === "string" && serverMessage.trim() ? serverMessage.trim() : fallback;
     const err = new Error(errorMessage) as Error & { code?: string };
     if (code === "EMAIL_VERIFICATION_REQUIRED") err.code = code;
     throw err;
@@ -162,7 +128,6 @@ export async function login(email: string, password: string) {
 }
 
 export async function verifyEmail(email: string, code: string) {
-  assertAuthConfigFromVite();
   let res: Response;
   try {
     res = await fetch(apiUrl("/api/auth/verify-email"), {
@@ -186,7 +151,6 @@ export async function verifyEmail(email: string, code: string) {
 }
 
 export async function resendVerificationEmail(email: string): Promise<{ success: boolean; message: string }> {
-  assertAuthConfigFromVite();
   const res = await fetch(apiUrl("/api/auth/resend-verification"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },

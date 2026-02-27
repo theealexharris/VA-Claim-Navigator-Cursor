@@ -283,9 +283,20 @@ export async function registerRoutes(
       console.error("[LOGIN] Error:", error?.message, "| statusCode:", statusCode, "| errorCode:", error?.errorCode);
       if (res.headersSent) return;
 
+      // Actual invalid credentials from Insforge → 401 (must check BEFORE the config catch-all)
+      const errorCode = String(error?.errorCode || "").toLowerCase();
+      if (
+        statusCode === 401 && (errorCode === "auth_unauthorized" || /invalid credentials/i.test(msg))
+      ) {
+        const safeMsg = /verify|verification|email.*confirm/i.test(msg)
+          ? "Please verify your email before signing in. Check your inbox for the verification link or code."
+          : "Invalid email or password. If you recently signed up, make sure you've verified your email first.";
+        return res.status(401).json({ message: safeMsg });
+      }
+
       // Config / key / auth service unreachable → 503 with clear message
       if (
-        statusCode === 401 && /invalid token|invalid key|anon|api key|unauthorized/i.test(String(error?.errorCode || ""))
+        statusCode === 401 && /invalid token|invalid key|anon|api key/i.test(errorCode)
         || /anon|api key|invalid key|invalid api|config|invalid token/i.test(msg)
       ) {
         return res.status(503).json({

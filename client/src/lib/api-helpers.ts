@@ -15,20 +15,6 @@ export function getApiBase(): string {
   return window.location?.origin ?? "";
 }
 
-/** Insforge backend base URL. Use VITE_INSFORGE_API_BASE_URL (not VITE_API_URL) for Insforge auth. Any Insforge client in the frontend must use import.meta.env.VITE_INSFORGE_* (not process.env). */
-export function getInsforgeApiBase(): string {
-  if (typeof window === "undefined") return "";
-  return (import.meta.env?.VITE_INSFORGE_API_BASE_URL ?? "").toString().trim().replace(/\/$/, "");
-}
-
-/** True if auth is configured from Vite env (browser-only). Use this instead of process.env in the frontend. */
-export function isAuthConfiguredFromEnv(): boolean {
-  if (typeof window === "undefined") return false;
-  const anon = (import.meta.env?.VITE_INSFORGE_ANON_KEY ?? "").toString().trim();
-  const base = (import.meta.env?.VITE_INSFORGE_API_BASE_URL ?? "").toString().trim();
-  return anon.length > 0 && base.length > 0 && !/your.*anon|placeholder|xxx|example/i.test(anon);
-}
-
 /** Full URL for an API path (e.g. "/api/auth/me" → "https://api.example.com/api/auth/me" or same-origin). */
 export function apiUrl(path: string): string {
   const base = getApiBase();
