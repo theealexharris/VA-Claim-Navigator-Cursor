@@ -43,7 +43,7 @@ export default function AuthPage() {
     fetch(apiUrl("/api/auth/status"))
       .then((r) => r.json())
       .then((d) => setAuthConfigError(d.error ?? null))
-      .catch(() => setAuthConfigError("Could not reach the server. Ensure you're using https://vaclaimnavigator.com and the backend is running."));
+      .catch(() => setAuthConfigError("Could not reach the server. Please check your internet connection and try again."));
   }, []);
 
   // Sync view when URL changes; set Deluxe pending when user lands on signup with tier=deluxe
@@ -77,7 +77,7 @@ export default function AuthPage() {
     }
   }, []);
 
-  // After successful login or signup – full redirect so URL bar shows correct origin (e.g. vaclaimnavigator.com)
+  // After successful login or signup – full redirect so URL bar shows correct origin
   function navigateAfterAuth() {
     const urlParams = new URLSearchParams(window.location.search);
     const tierParam = urlParams.get("tier");
@@ -442,11 +442,6 @@ export default function AuthPage() {
               {isLogin ? "Sign up" : "Log in"}
             </Link>
           </p>
-          {typeof window !== "undefined" && !window.location.hostname.includes("vaclaimnavigator.com") && (
-            <p className="text-xs text-muted-foreground/80">
-              Use the official site: <a href="https://vaclaimnavigator.com" className="text-primary underline">https://vaclaimnavigator.com</a>
-            </p>
-          )}
         </CardFooter>
       </Card>
     </div>

@@ -161,31 +161,34 @@ declare module "http" {
 }
 
 // ─── Startup state (shared across the boot sequence) ────────────────────────
-const port = parseInt(process.env.PORT || "5000", 10);
-// Bind to 0.0.0.0 so the server accepts connections on all interfaces
+const port = Number(process.env.PORT) || 3000;
+// Bind to 0.0.0.0 so browser can connect via localhost or 127.0.0.1 (fixes connection refused on some Windows setups)
 const host = process.env.HOST || "0.0.0.0";
 const bootState = { routesReady: false, viteReady: false, bootError: null as string | null };
 
-// App URL for redirects and display (e.g. https://vaclaimnavigator.com)
-const appBaseUrl = (process.env.APP_URL || "https://vaclaimnavigator.com").replace(/\/$/, "");
-
-// ─── CORS: allow app domain(s); in dev allow any origin for flexibility ─
+// ─── CORS: allow browser requests from production and dev origins ─────────────
 const allowedOrigins = [
-  appBaseUrl,
+  // Production
+  "https://vaclaimnavigator.com",
   "https://www.vaclaimnavigator.com",
-  "http://vaclaimnavigator.com",
-  "http://www.vaclaimnavigator.com",
-  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean) : []),
+  // Vercel preview/deploy URLs
+  ...(process.env.VERCEL_URL ? [`https://${process.env.VERCEL_URL}`] : []),
+  // Dev
+  `http://localhost:${port}`,
+  `http://127.0.0.1:${port}`,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
 ];
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  const allowOrigin = process.env.NODE_ENV !== "production" && origin
-    ? origin
-    : (origin && allowedOrigins.includes(origin))
-      ? origin
-      : null;
-  if (allowOrigin) {
-    res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+  if (origin && (
+    allowedOrigins.includes(origin) ||
+    origin.endsWith(".vercel.app") ||
+    origin.endsWith(".vaclaimnavigator.com") ||
+    origin.startsWith("http://localhost:") ||
+    origin.startsWith("http://127.0.0.1:")
+  )) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
@@ -196,8 +199,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Static assets ──────────────────────────────────────────────────────────
-app.use('/attached_assets', express.static(path.join(process.cwd(), 'attached_assets')));
 
 // ─── Stripe webhook (MUST be before express.json()) ─────────────────────────
 app.post(
@@ -428,7 +429,7 @@ app.get("/api/health", (_req, res) => {
 
 // ─── Loading / error page middleware (dev only, shown while routes & Vite compile) ─
 if (process.env.NODE_ENV !== "production") {
-  const appUrl = appBaseUrl || `http://127.0.0.1:${port}`;
+  const appUrl = `http://localhost:${port}`;
 
   const loadingHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Loading…</title>
     <meta http-equiv="refresh" content="15">
@@ -447,7 +448,7 @@ if (process.env.NODE_ENV !== "production") {
     .url-bar button.copy:hover{background:#64748b}
     .tip{margin-top:16px;font-size:12px;color:#64748b;max-width:420px;text-align:center}</style></head>
     <body><div class="main"><div class="spinner"></div><div><h2>Starting up…</h2><p>The app is compiling. This page will reload automatically.</p><p class="status" id="status"></p></div></div>
-    <p class="tip" id="tip">If the app does not load after a minute, check the terminal for errors or run: npx kill-port 5000 then npm run dev</p>
+    <p class="tip" id="tip">If the app does not load after a minute, check the terminal for errors.</p>
     <div class="url-bar"><input type="text" id="app-url" value="${appUrl}" readonly />
     <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('app-url').value);this.textContent='Copied!'">Copy URL</button>
     <button type="button" onclick="window.location.reload()">Retry</button></div>
@@ -473,7 +474,7 @@ if (process.env.NODE_ENV !== "production") {
     .tip{margin-top:16px;font-size:13px;color:#94a3b8}</style></head>
     <body><div class="box"><h2>Server Startup Error</h2><p>The server hit an error while loading. It will auto-retry. Check the terminal for details.</p>
     <pre>${msg.replace(/</g, "&lt;")}</pre>
-    <p class="tip">Fix the error in the terminal, then refresh. If the port is stuck, run: <code>npx kill-port 5000</code> then <code>npm run dev</code></p></div></body></html>`;
+    <p class="tip">Fix the error in the terminal, then refresh.</p></div></body></html>`;
 
   // This middleware runs for EVERY non-API request. It gates traffic until routes + Vite are ready.
   app.use((req, res, next) => {
@@ -544,22 +545,13 @@ function startListening(attemptNum = 1) {
     // Remove the one-shot error handler now that we're listening
     httpServer.removeListener("error", errorHandler);
 
-    const url = appBaseUrl || (host === "0.0.0.0" ? `http://127.0.0.1:${port}` : `http://${host}:${port}`);
-    log(`serving at ${url} (listening on ${host}:${port})`);
-    if (host === "0.0.0.0") {
-      const nets = os.networkInterfaces();
-      for (const name of Object.keys(nets)) {
-        for (const n of nets[name] || []) {
-          if (n.family === "IPv4" && !n.internal) {
-            log(`  On the network: http://${n.address}:${port}`);
-            break;
-          }
-        }
-      }
-    }
+    // In production (Render), localhost is not the public URL.
+    // Log bind info, and only use localhost for dev conveniences.
+    log(`listening on ${host}:${port}`);
 
-    // Browser auto-open (dev only): 2s delay so port is fully bound (helps on Windows)
     if (process.env.NODE_ENV !== "production") {
+      const url = `http://localhost:${port}`;
+      log(`dev: serving on ${url}`);
       setTimeout(() => openBrowser(url), 2000);
     }
 

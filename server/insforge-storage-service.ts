@@ -625,21 +625,23 @@ export class InsforgeStorageService implements IStorage {
   }
 
   // Site Stats methods
-  async getStat(key: string, accessToken?: string): Promise<number> {
-    const { data, error } = await this.getClient(accessToken).database
-      .from('site_stats')
-      .select('value')
-      .eq('key', key)
-      .single();
+async getStat(key: string, accessToken?: string): Promise<number | null> {
+  const { data, error } = await this.getClient(accessToken).database
+    .from("site_stats")
+    .select("value")
+    .eq("key", key)
+    .single();
 
-    if (error) return 0;
-    return data?.value ?? 0;
-  }
+  // Missing row OR any error -> treat as "doesn't exist"
+  if (error || !data) return null;
+
+  return typeof data.value === "number" ? data.value : null;
+}
 
   async incrementStat(key: string, accessToken?: string): Promise<number> {
     // Get current value
-    const currentValue = await this.getStat(key, accessToken);
-    const newValue = currentValue + 1;
+    const currentValue = (await this.getStat(key, accessToken)) ?? 0;
+const newValue = currentValue + 1;
 
     // Update or insert (PostgREST doesn't have upsert, so we try update first, then insert)
     const { data: updateData, error: updateError } = await this.getClient(accessToken).database
@@ -665,15 +667,17 @@ export class InsforgeStorageService implements IStorage {
   }
 
   async initializeStat(key: string, value: number, accessToken?: string): Promise<void> {
-    const existing = await this.getStat(key, accessToken);
-    if (existing === 0) {
-      const { error } = await this.getClient(accessToken).database
-        .from('site_stats')
-        .insert([{ key, value }]);
+  const existing = await this.getStat(key, accessToken);
 
-      if (error) throw new Error(`Failed to initialize stat: ${error.message}`);
-    }
+  // Only initialize if the stat truly doesn't exist
+  if (existing == null) {
+    const { error } = await this.getClient(accessToken).database
+      .from("site_stats")
+      .insert([{ key, value }]);
+
+    if (error) throw new Error(`Failed to initialize stat: ${error.message}`);
   }
+}
 
   // Stripe methods - query from stripe schema
   async getStripeProducts(accessToken?: string): Promise<any[]> {
@@ -698,16 +702,16 @@ export class InsforgeStorageService implements IStorage {
     return data || [];
   }
 
-  async getStripeProduct(productId: string, accessToken?: string): Promise<any> {
-    const { data, error } = await this.getClient(accessToken).database
-      .from('stripe.products')
-      .select()
-      .eq('id', productId)
-      .single();
+  async getStat(key: string, accessToken?: string): Promise<number | null> {
+  const { data, error } = await this.getClient(accessToken).database
+    .from('site_stats')
+    .select('value')
+    .eq('key', key)
+    .single();
 
-    if (error) return null;
-    return data || null;
-  }
+  if (error || !data) return null;
+  return typeof data.value === "number" ? data.value : null;
+}
 
   async getStripeSubscription(subscriptionId: string, accessToken?: string): Promise<any> {
     const { data, error } = await this.getClient(accessToken).database
