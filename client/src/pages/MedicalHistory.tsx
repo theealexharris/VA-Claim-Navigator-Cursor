@@ -42,7 +42,7 @@ export default function MedicalHistory() {
   const [showAddCondition, setShowAddCondition] = useState(false);
   const [showAddProvider, setShowAddProvider] = useState(false);
   const [showServiceConnectedWarning, setShowServiceConnectedWarning] = useState(false);
-  const [isServiceConnected, setIsServiceConnected] = useState<string>("");
+  const [isServiceConnected, setIsServiceConnected] = useState<string>("no");
   const [serviceConnectedPercentage, setServiceConnectedPercentage] = useState<string>("");
   const [isProfileComplete, setIsProfileComplete] = useState(false);
   const [showProfileRequiredDialog, setShowProfileRequiredDialog] = useState(false);
@@ -370,7 +370,7 @@ export default function MedicalHistory() {
             <CardContent>
               {isServiceConnected === "no" ? (
                 <p className="text-muted-foreground text-center py-6">
-                  Select "Yes" above to view and manage your current diagnoses.
+                  Click on Add Condition and put "NONE" in the "Condition Name" even if you are not service connected.
                 </p>
               ) : (
               <div className="space-y-4">
