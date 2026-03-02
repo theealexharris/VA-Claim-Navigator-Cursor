@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-export const PROMO_ACTIVE = true;
+export const PROMO_ACTIVE = false;
 
 interface SubscriptionState {
   subscriptionTier: string;

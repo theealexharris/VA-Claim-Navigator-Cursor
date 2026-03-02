@@ -85,10 +85,11 @@ export default function LandingPage() {
     try {
       const authCheck = await fetch(apiUrl("/api/auth/me"), { credentials: "include" });
       const isLoggedIn = authCheck.status === 200;
-      
-      // Pro tier is free - go directly to profile
+
+      // Pro tier - go to profile first, then payment after saving ($97)
       if (tierName === "Pro") {
         localStorage.setItem("selectedTier", "pro");
+        localStorage.setItem("pendingProPayment", "true");
         localStorage.removeItem("pendingDeluxePayment");
         if (isLoggedIn) {
           window.location.href = "/dashboard/profile";
@@ -97,11 +98,12 @@ export default function LandingPage() {
         }
         return;
       }
-      
+
       // Deluxe tier - go to profile first, then payment after saving
       if (tierName === "Deluxe") {
         localStorage.setItem("selectedTier", "deluxe");
         localStorage.setItem("pendingDeluxePayment", "true");
+        localStorage.removeItem("pendingProPayment");
         if (isLoggedIn) {
           window.location.href = "/dashboard/profile";
         } else {
@@ -240,15 +242,16 @@ export default function LandingPage() {
                     Book Free Strategy Session
                   </Button>
                 </Link>
-                <Button 
-                  size="lg" 
-                  variant="outline" 
-                  className="h-14 px-8 text-lg font-semibold border-2 hover:bg-muted/50 opacity-60 cursor-not-allowed" 
-                  data-testid="button-get-started"
-                  onClick={() => setShowPromoPopup(true)}
-                >
-                  Get Started Free
-                </Button>
+                <Link href="/signup">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="h-14 px-8 text-lg font-semibold border-2 hover:bg-muted/50"
+                    data-testid="button-get-started"
+                  >
+                    Get Started Free
+                  </Button>
+                </Link>
               </div>
               
               <div className="flex items-center gap-4 text-sm text-muted-foreground pt-4">
@@ -426,13 +429,14 @@ export default function LandingPage() {
                   <PricingFeature>Free 30-min 1:1 consult call</PricingFeature>
                   <PricingFeature>Email Support</PricingFeature>
                 </ul>
-                <Button 
-                  className="w-full h-11 font-semibold bg-primary text-primary-foreground hover:bg-primary/90 opacity-60 cursor-not-allowed" 
-                  data-testid="button-starter"
-                  onClick={() => setShowPromoPopup(true)}
-                >
-                  Get Started Free
-                </Button>
+                <Link href="/signup">
+                  <Button
+                    className="w-full h-11 font-semibold bg-primary text-primary-foreground hover:bg-primary/90"
+                    data-testid="button-starter"
+                  >
+                    Get Started Free
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
 
@@ -452,10 +456,9 @@ export default function LandingPage() {
               <CardContent className="pt-4">
                 <div className="text-center mb-6">
                   <div className="flex items-center justify-center gap-2">
-                    <span className="text-2xl font-bold text-primary">Free For First 500 Veterans</span>
+                    <span className="text-4xl font-bold text-primary">$97</span>
+                    <span className="text-muted-foreground text-sm">/One Time Rate</span>
                   </div>
-                  <span className="text-sm font-semibold text-green-600 bg-green-100 px-2 py-1 rounded mt-2 inline-block">Limited Time Offer</span>
-                  <p className="text-sm text-muted-foreground mt-2">Standard Price is <span className="line-through">$97</span></p>
                 </div>
                 <ul className="space-y-3 mb-6 text-sm">
                   <PricingFeature>Everything in Starter</PricingFeature>
@@ -469,7 +472,7 @@ export default function LandingPage() {
                 <Button 
                   className="w-full h-11 font-semibold bg-secondary text-secondary-foreground hover:bg-secondary/90" 
                   data-testid="button-pro"
-                  onClick={() => handlePaidTierClick("Pro", "Free")}
+                  onClick={() => handlePaidTierClick("Pro", "$97")}
                 >
                   Go Pro
                 </Button>

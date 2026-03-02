@@ -54,7 +54,12 @@ export default function AuthPage() {
       const tierParam = new URLSearchParams(window.location.search).get("tier");
       if (tierParam === "deluxe") {
         localStorage.setItem("pendingDeluxePayment", "true");
+        localStorage.removeItem("pendingProPayment");
         localStorage.setItem("selectedTier", "deluxe");
+      } else if (tierParam === "pro") {
+        localStorage.setItem("pendingProPayment", "true");
+        localStorage.removeItem("pendingDeluxePayment");
+        localStorage.setItem("selectedTier", "pro");
       }
     }
   }, [isLogin, isSignup]);
@@ -82,6 +87,7 @@ export default function AuthPage() {
     const urlParams = new URLSearchParams(window.location.search);
     const tierParam = urlParams.get("tier");
     const pendingDeluxe = localStorage.getItem("pendingDeluxePayment");
+    const pendingPro = localStorage.getItem("pendingProPayment");
     const redirectAfterLogin = sessionStorage.getItem("redirectAfterLogin");
     sessionStorage.removeItem("redirectAfterLogin");
 
@@ -91,13 +97,10 @@ export default function AuthPage() {
       localStorage.setItem("pendingDeluxePayment", "true");
       localStorage.setItem("selectedTier", "deluxe");
       path = "/dashboard/profile";
-    } else if (tierParam === "pro") {
+    } else if (tierParam === "pro" || pendingPro === "true") {
+      localStorage.setItem("pendingProPayment", "true");
       localStorage.setItem("selectedTier", "pro");
-      // Pro users who were sent to login to reach claim builder go there; others go to profile
-      path =
-        redirectAfterLogin && redirectAfterLogin.startsWith("/dashboard")
-          ? redirectAfterLogin
-          : "/dashboard/profile";
+      path = "/dashboard/profile";
     } else if (redirectAfterLogin && redirectAfterLogin.startsWith("/dashboard")) {
       path = redirectAfterLogin;
     }
@@ -198,9 +201,10 @@ export default function AuthPage() {
 
       toast({ title: "Email verified!", description: "Welcome to VA Claim Navigator™." });
 
-      // If they chose Deluxe, send them to profile to complete then pay $499
+      // If they chose Deluxe or Pro, send them to profile to complete then pay
       const pendingDeluxe = localStorage.getItem("pendingDeluxePayment");
-      const redirect = pendingDeluxe === "true" ? "/dashboard/profile" : "/dashboard";
+      const pendingPro = localStorage.getItem("pendingProPayment");
+      const redirect = (pendingDeluxe === "true" || pendingPro === "true") ? "/dashboard/profile" : "/dashboard";
       window.location.href = redirect;
     } catch (error: any) {
       toast({

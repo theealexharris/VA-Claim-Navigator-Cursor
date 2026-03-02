@@ -30,7 +30,7 @@ const ALL_USER_KEYS = [
   "layStatements", "buddyStatements", "serviceConnectedPercentage",
   "personalInfoComplete", "serviceHistoryComplete", "medicalConditionsComplete",
   "previousClaimEnded", "showOnboarding", "selectedTier",
-  "pendingDeluxePayment", "paymentComplete", "loginTimestamp"
+  "pendingDeluxePayment", "pendingProPayment", "paymentComplete", "loginTimestamp"
 ];
 
 /** Clear SSN from userProfile in localStorage */

@@ -27,10 +27,11 @@ export default function Dashboard() {
   const [showTermsPopup, setShowTermsPopup] = useState(false);
 
   useEffect(() => {
-    // If user has pending Deluxe payment, send them to Profile to complete then pay $499
+    // If user has pending Deluxe or Pro payment, send them to Profile to complete then pay
     const pendingDeluxe = localStorage.getItem("pendingDeluxePayment");
+    const pendingPro = localStorage.getItem("pendingProPayment");
     const urlParams = new URLSearchParams(window.location.search);
-    if (pendingDeluxe === "true" && urlParams.get("payment") !== "success") {
+    if ((pendingDeluxe === "true" || pendingPro === "true") && urlParams.get("payment") !== "success") {
       setLocation("/dashboard/profile");
       return;
     }
@@ -52,6 +53,7 @@ export default function Dashboard() {
       
       // Clear pending payment flags on successful payment
       localStorage.removeItem("pendingDeluxePayment");
+      localStorage.removeItem("pendingProPayment");
       localStorage.setItem("paymentComplete", "true");
       localStorage.setItem("selectedTier", tier);
       

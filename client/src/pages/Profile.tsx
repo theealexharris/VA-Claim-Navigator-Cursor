@@ -136,11 +136,14 @@ export default function Profile() {
   };
 
   const pendingDeluxePayment = typeof window !== "undefined" ? localStorage.getItem("pendingDeluxePayment") === "true" : false;
+  const pendingProPayment = typeof window !== "undefined" ? localStorage.getItem("pendingProPayment") === "true" : false;
+  const pendingPayment = pendingDeluxePayment || pendingProPayment;
 
   const handleSave = async () => {
-    // When Deluxe is pending, require at least first name, last name, and email before saving and sending to Stripe
+    // When Deluxe or Pro is pending, require at least first name, last name, and email before saving and sending to Stripe
     const pendingDeluxe = localStorage.getItem("pendingDeluxePayment") === "true";
-    if (pendingDeluxe) {
+    const pendingPro = localStorage.getItem("pendingProPayment") === "true";
+    if (pendingDeluxe || pendingPro) {
       const first = (formData.firstName || "").trim();
       const last = (formData.lastName || "").trim();
       const email = (formData.email || "").trim();
@@ -212,7 +215,7 @@ export default function Profile() {
             method: "POST",
             body: JSON.stringify({ priceId: deluxePriceId, tier: "deluxe" })
           });
-          
+
           if (response.status === 401) {
             const loginTs = localStorage.getItem("loginTimestamp");
             const elapsedMs = loginTs ? Date.now() - parseInt(loginTs, 10) : Infinity;
@@ -232,7 +235,7 @@ export default function Profile() {
             });
             return;
           }
-          
+
           const data = await response.json();
           const checkoutUrl = typeof data?.url === "string" && data.url.startsWith("https://") ? data.url : null;
           if (checkoutUrl) {
@@ -241,6 +244,66 @@ export default function Profile() {
               description: "Redirecting you to secure payment for Deluxe ($499)...",
             });
             // Automatically send user to Stripe to pay $499
+            window.location.href = checkoutUrl;
+            return;
+          }
+          const errorMessage = data?.message || "Unable to create checkout session. Please try again.";
+          toast({
+            title: "Payment Error",
+            description: errorMessage,
+            variant: "destructive",
+          });
+        } catch (error) {
+          toast({
+            title: "Payment Error",
+            description: "Failed to process payment. Please try again.",
+            variant: "destructive",
+          });
+        }
+      } else if (localStorage.getItem("pendingProPayment") === "true") {
+        const proPriceId = getPriceId("pro");
+        if (!proPriceId) {
+          toast({
+            title: "Stripe payment not configured",
+            description: "The Pro Stripe Price ID is not set. Add STRIPE_PRICE_ID_PRO to the server .env file (see STRIPE_SETUP.md). Restart the server after saving.",
+            variant: "destructive",
+          });
+          return;
+        }
+        try {
+          const response = await authFetch("/api/stripe/checkout", {
+            method: "POST",
+            body: JSON.stringify({ priceId: proPriceId, tier: "pro" })
+          });
+
+          if (response.status === 401) {
+            const loginTs = localStorage.getItem("loginTimestamp");
+            const elapsedMs = loginTs ? Date.now() - parseInt(loginTs, 10) : Infinity;
+            if (elapsedMs >= 60 * 60 * 1000) {
+              toast({
+                title: "Session Expired",
+                description: "Please log in again to continue.",
+                variant: "destructive",
+              });
+              setLocation("/login");
+              return;
+            }
+            toast({
+              title: "Authentication Error",
+              description: "Unable to start checkout. Please try again.",
+              variant: "destructive",
+            });
+            return;
+          }
+
+          const data = await response.json();
+          const checkoutUrl = typeof data?.url === "string" && data.url.startsWith("https://") ? data.url : null;
+          if (checkoutUrl) {
+            toast({
+              title: "Profile saved",
+              description: "Redirecting you to secure payment for Pro ($97)...",
+            });
+            // Automatically send user to Stripe to pay $97
             window.location.href = checkoutUrl;
             return;
           }
@@ -295,12 +358,12 @@ export default function Profile() {
           <p className="text-lg text-muted-foreground">Manage your personal and contact information.</p>
         </div>
 
-        {pendingDeluxePayment && (
+        {pendingPayment && (
           <Alert className="border-primary bg-primary/10">
             <CheckCircle2 className="h-4 w-4 text-primary" />
             <AlertTitle>Complete your profile, then continue to payment</AlertTitle>
             <AlertDescription>
-              Fill in all applicable fields below. When you click &quot;Save Personal Information,&quot; your profile will be saved and you will be automatically taken to our linked Stripe payment page to complete your Deluxe purchase ($499).
+              Fill in all applicable fields below. When you click &quot;Save Personal Information,&quot; your profile will be saved and you will be automatically taken to our linked Stripe payment page to complete your {pendingDeluxePayment ? "Deluxe purchase ($499)" : "Pro purchase ($97)"}.
             </AlertDescription>
           </Alert>
         )}
@@ -438,17 +501,17 @@ export default function Profile() {
                 onClick={handleSave}
                 disabled={isSaving}
                 data-testid="button-save-profile"
-                className={pendingDeluxePayment ? "bg-primary text-primary-foreground hover:bg-primary/90" : ""}
+                className={pendingPayment ? "bg-primary text-primary-foreground hover:bg-primary/90" : ""}
               >
                 {isSaving ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {pendingDeluxePayment ? "Saving & redirecting to payment..." : "Saving..."}
+                    {pendingPayment ? "Saving & redirecting to payment..." : "Saving..."}
                   </>
                 ) : (
                   <>
                     <CheckCircle2 className="mr-2 h-4 w-4" />
-                    {pendingDeluxePayment ? "Save Personal Information & continue to payment" : "Save Personal Information"}
+                    {pendingPayment ? "Save Personal Information & continue to payment" : "Save Personal Information"}
                   </>
                 )}
               </Button>

@@ -458,13 +458,12 @@ export default function Settings() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className={`border-2 rounded-lg p-4 text-center ${settings.subscriptionTier === "pro" ? "border-secondary bg-secondary/5" : ""}`}>
                 <h4 className="text-lg font-bold text-primary">PRO</h4>
-                <p className="text-lg font-bold text-primary my-1">Free For First 500 Veterans</p>
-                <p className="text-xs text-green-600 font-semibold mb-1">Limited Time Offer</p>
-                <p className="text-xs text-muted-foreground mb-2">Standard Price is <span className="line-through">$97</span></p>
+                <p className="text-2xl font-bold text-primary my-1">$97</p>
+                <p className="text-xs text-muted-foreground mb-2">One Time Rate</p>
                 <Button 
                   className="w-full" 
                   variant={settings.subscriptionTier === "pro" ? "secondary" : "outline"}
-                  onClick={() => handleUpgradePlan("Pro", "Free")}
+                  onClick={() => handleUpgradePlan("Pro", "$97")}
                   disabled={settings.subscriptionTier === "pro" || isProcessingPayment}
                 >
                   {settings.subscriptionTier === "pro" ? "Current Plan" : isProcessingPayment ? "Processing..." : "Upgrade"}
