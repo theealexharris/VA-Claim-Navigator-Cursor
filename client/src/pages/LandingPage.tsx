@@ -36,6 +36,7 @@ import avatar1 from "@assets/stock_images/diverse_professional_43b32cf6.jpg";
 import avatar2 from "@assets/stock_images/diverse_professional_31dd8b43.jpg";
 import avatar3 from "@assets/stock_images/diverse_professional_7cce766a.jpg";
 import avatar4 from "@assets/stock_images/diverse_professional_b621c6df.jpg";
+import veteranImage from "@assets/IMG_0398_1769121331059.jpeg";
 
 export default function LandingPage() {
   const { toast } = useToast();
@@ -372,7 +373,7 @@ export default function LandingPage() {
             />
             <div className="md:col-span-2 flex justify-center items-start">
               <img 
-                src="/attached_assets/IMG_0398_1769121331059.jpeg" 
+                src={veteranImage} 
                 alt="Veteran at VA Liberty Building" 
                 className="rounded-xl shadow-lg max-w-md w-full object-cover"
                 data-testid="img-veteran-feature"
