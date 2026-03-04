@@ -193,7 +193,7 @@ export class DatabaseStorage implements IStorage {
     const insertData = {
       ...claim,
       symptoms: claim.symptoms ? Array.from(claim.symptoms) : null,
-    } as Parameters<typeof db.insert<typeof claims>>["0"] extends { values: (v: infer V) => unknown } ? V : never;
+    } as any;
     const [result] = await db.insert(claims).values(insertData).returning();
     return result;
   }

@@ -18,10 +18,9 @@ app.use((req, res, next) => {
   if (origin && (
     origin === "https://vaclaimnavigator.com" ||
     origin === "https://www.vaclaimnavigator.com" ||
-    origin.endsWith(".vercel.app") ||
-    origin.endsWith(".vaclaimnavigator.com") ||
-    origin.startsWith("http://localhost:") ||
-    origin.startsWith("http://127.0.0.1:")
+    origin === "https://app.vaclaimnavigator.com" ||
+    // Only allow Vercel preview URLs matching our project
+    /^https:\/\/va-claim-navigator[a-z0-9-]*\.vercel\.app$/.test(origin)
   )) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
@@ -115,7 +114,9 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   const message = err.message || "Internal Server Error";
   console.error(`[ERROR] ${status}: ${message}`);
   if (!res.headersSent) {
-    res.status(status).json({ message });
+    // Don't leak internal error details to clients in production
+    const safeMessage = status >= 500 ? "Internal Server Error" : message;
+    res.status(status).json({ message: safeMessage });
   }
 });
 

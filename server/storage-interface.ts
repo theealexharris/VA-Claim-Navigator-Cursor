@@ -96,7 +96,7 @@ export interface IStorage {
   cancelConsultation(id: string, accessToken?: string): Promise<Consultation | undefined>;
 
   // Site Stats methods
-  getStat(key: string, accessToken?: string): Promise<number>;
+  getStat(key: string, accessToken?: string): Promise<number | null>;
   incrementStat(key: string, accessToken?: string): Promise<number>;
   initializeStat(key: string, value: number, accessToken?: string): Promise<void>;
 

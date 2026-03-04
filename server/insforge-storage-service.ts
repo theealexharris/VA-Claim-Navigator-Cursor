@@ -702,16 +702,16 @@ const newValue = currentValue + 1;
     return data || [];
   }
 
-  async getStat(key: string, accessToken?: string): Promise<number | null> {
-  const { data, error } = await this.getClient(accessToken).database
-    .from('site_stats')
-    .select('value')
-    .eq('key', key)
-    .single();
+  async getStripeProduct(productId: string, accessToken?: string): Promise<any> {
+    const { data, error } = await this.getClient(accessToken).database
+      .from('stripe.products')
+      .select()
+      .eq('id', productId)
+      .single();
 
-  if (error || !data) return null;
-  return typeof data.value === "number" ? data.value : null;
-}
+    if (error || !data) return undefined;
+    return data;
+  }
 
   async getStripeSubscription(subscriptionId: string, accessToken?: string): Promise<any> {
     const { data, error } = await this.getClient(accessToken).database

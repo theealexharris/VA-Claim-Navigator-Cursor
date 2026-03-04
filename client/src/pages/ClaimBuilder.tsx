@@ -688,7 +688,7 @@ export default function ClaimBuilder() {
           throw lastPutError ?? new Error("Upload failed. Please try again.");
         }
 
-        let uploadData: { serverFilePath?: string; objectPath?: string } = {};
+        let uploadData: { fileId?: string; serverFilePath?: string; objectPath?: string } = {};
         try {
           const text = await uploadResponse.text();
           uploadData = text ? JSON.parse(text) : {};
@@ -696,13 +696,14 @@ export default function ClaimBuilder() {
           console.warn("[Upload] Response was not JSON; continuing with local file path.");
         }
 
-        const serverFilePath = uploadData?.serverFilePath;
+        // Prefer fileId (safe basename) over legacy serverFilePath
+        const fileRef = uploadData?.fileId ?? uploadData?.serverFilePath;
         const resolvedObjectPath = objectPath ?? uploadData?.objectPath ?? `/objects/uploads/${file.name}`;
 
-        handleFileUpload(evidenceId, file.name, undefined, file.type, resolvedObjectPath, serverFilePath);
+        handleFileUpload(evidenceId, file.name, undefined, file.type, resolvedObjectPath, fileRef);
 
         const evidenceItem = allEvidence.find((e) => e.id === evidenceId);
-        runMedicalRecordsAnalysis(evidenceId, file, evidenceItem?.type || "Medical Records", serverFilePath)
+        runMedicalRecordsAnalysis(evidenceId, file, evidenceItem?.type || "Medical Records", fileRef)
           .catch((err) => console.error("[Analysis] Background analysis failed:", err));
       } catch (error: any) {
         console.error("Upload error:", error);
@@ -853,13 +854,13 @@ export default function ClaimBuilder() {
         : `Analyzing ${evidenceType || "medical records"} for diagnoses...`
     );
     try {
-      // Send serverFilePath so the server reads the file from disk (no base64 needed)
+      // Send fileId so the server reads the file from disk (no base64 needed)
       const requestBody: Record<string, string> = {
         fileType: file?.type || fallbackFileType || "application/octet-stream",
         fileName: file?.name || fallbackFileName || "document",
       };
       if (serverFilePath) {
-        requestBody.serverFilePath = serverFilePath;
+        requestBody.fileId = serverFilePath;
       } else {
         if (!file) {
           throw new Error("Please re-upload the file so it can be analyzed.");

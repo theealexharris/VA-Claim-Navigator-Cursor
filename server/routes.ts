@@ -21,6 +21,12 @@ import fs from "fs";
 import path from "path";
 import { TEMP_UPLOAD_DIR } from "./constants";
 
+/** Return a safe error message for 500s — never leak internal details in production */
+function safeErrorMessage(error: any, fallback = "An unexpected error occurred"): string {
+  if (process.env.NODE_ENV !== "production") return error?.message || fallback;
+  return fallback;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -979,9 +985,10 @@ export async function registerRoutes(
       if (!referral) {
         return res.status(404).json({ message: "Referral code not found" });
       }
-      res.json({ valid: true, referrerId: referral.referrerId });
+      // Only expose validity - never leak internal user IDs to public
+      res.json({ valid: true });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: "Failed to validate referral code" });
     }
   });
 
@@ -1121,14 +1128,14 @@ export async function registerRoutes(
       const response = await getFeatureResearch(feature, query, context);
       res.json({ response });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: safeErrorMessage(error, "AI research request failed") });
     }
   });
 
   app.post("/api/ai/condition-guidance", async (req, res) => {
     try {
       const { conditionName } = req.body;
-      
+
       if (!conditionName) {
         return res.status(400).json({ message: "Condition name is required" });
       }
@@ -1136,7 +1143,7 @@ export async function registerRoutes(
       const guidance = await getConditionGuidance(conditionName);
       res.json(guidance);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: safeErrorMessage(error, "Failed to get condition guidance") });
     }
   });
 
@@ -1224,10 +1231,10 @@ export async function registerRoutes(
       }
 
       const body = req.body && typeof req.body === "object" ? req.body : {};
-      const { fileData, fileType, fileName, extractedText, serverFilePath } = body;
+      const { fileData, fileType, fileName, extractedText, serverFilePath, fileId } = body;
       const fileDataLen = typeof fileData === "string" ? fileData.length : 0;
       console.log("[ANALYZE] Request received:", {
-        serverFilePath: serverFilePath || "(none)",
+        fileId: fileId || "(none)",
         fileDataLength: fileDataLen,
         fileType: fileType || "(none)",
         fileName: fileName || "(none)",
@@ -1235,8 +1242,14 @@ export async function registerRoutes(
       });
 
       // Primary path: read file from server disk (avoids large base64 payloads)
-      if (serverFilePath && String(serverFilePath).trim()) {
-        const resolvedPath = path.resolve(String(serverFilePath));
+      // Accept fileId (safe basename) or legacy serverFilePath (full path, validated)
+      const fileRef = fileId ? String(fileId).trim() : (serverFilePath ? String(serverFilePath).trim() : "");
+      if (fileRef) {
+        // If fileRef looks like a basename (no path separators), resolve against TEMP_UPLOAD_DIR
+        const isBasename = !fileRef.includes('/') && !fileRef.includes('\\') && !fileRef.includes('..');
+        const resolvedPath = isBasename
+          ? path.resolve(TEMP_UPLOAD_DIR, fileRef)
+          : path.resolve(fileRef);
         const resolvedTempDir = path.resolve(TEMP_UPLOAD_DIR);
 
         if (!resolvedPath.startsWith(resolvedTempDir)) {
@@ -1304,7 +1317,7 @@ export async function registerRoutes(
       const count = await storage.getStat("vets_served");
       res.json({ count });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: safeErrorMessage(error, "Failed to load stats") });
     }
   });
 
@@ -1316,7 +1329,7 @@ export async function registerRoutes(
       const products = await stripe.products.list({ active: true });
       res.json({ data: products.data });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: safeErrorMessage(error, "Failed to load products") });
     }
   });
 
@@ -1327,7 +1340,7 @@ export async function registerRoutes(
       const prices = await stripe.prices.list({ active: true });
       res.json({ data: prices.data });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: safeErrorMessage(error, "Failed to load prices") });
     }
   });
 
@@ -1337,7 +1350,7 @@ export async function registerRoutes(
       const key = await getStripePublishableKey();
       res.json({ publishableKey: key });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: safeErrorMessage(error, "Failed to load Stripe key") });
     }
   });
 
@@ -1500,23 +1513,29 @@ export async function registerRoutes(
 
       res.json({ url: checkoutSession.url });
     } catch (error: any) {
-      console.error("Stripe checkout error:", error);
-      res.status(500).json({ message: error.message });
+      console.error("Stripe checkout error:", error.message);
+      res.status(500).json({ message: safeErrorMessage(error, "Failed to create checkout session") });
     }
   });
 
   // File upload routes using Insforge storage
+  const uploadRequestSchema = z.object({
+    name: z.string().min(1).max(255),
+    size: z.number().max(100 * 1024 * 1024).optional(), // 100MB max
+    contentType: z.string().max(100).optional(),
+  });
+
   app.post("/api/uploads/request-url", optionalInsforgeAuth(), async (req, res) => {
     try {
-      const { name, size, contentType } = req.body ?? {};
-      console.log("[UPLOAD-URL] Request received:", { name, size, contentType });
-
-      if (!name) {
-        console.warn("[UPLOAD-URL] Missing 'name' in body. Body was:", JSON.stringify(req.body));
+      const parseResult = uploadRequestSchema.safeParse(req.body ?? {});
+      if (!parseResult.success) {
         return res.status(400).json({
-          error: "Missing required field: name",
+          error: "Invalid upload request",
+          details: parseResult.error.flatten().fieldErrors,
         });
       }
+      const { name, size, contentType } = parseResult.data;
+      console.log("[UPLOAD-URL] Request received:", { name, size, contentType });
 
       const objectId = randomUUID();
       const storagePath = `uploads/${objectId}/${name}`;
@@ -1537,13 +1556,18 @@ export async function registerRoutes(
     }
   });
 
-  // Serve/download files - tries Insforge storage first, falls back to local temp directory
-  app.get("/objects/:path(*)", async (req, res) => {
+  // Serve/download files - requires auth, tries Insforge storage first, falls back to local temp directory
+  app.get("/objects/:path(*)", optionalInsforgeAuth(), async (req, res) => {
     try {
       const objectPath = req.params.path;
       const filePath = objectPath.replace(/^\/?objects\//, '');
 
-      // Try Insforge storage first
+      // Reject suspicious path components (path traversal defense)
+      if (/(\.\.|%2e%2e|%252e)/i.test(filePath)) {
+        return res.status(400).json({ error: "Invalid path" });
+      }
+
+      // Try Insforge storage first (Insforge handles its own auth/RLS)
       try {
         await insforgeStorage.serveFile(filePath, res);
         return;
@@ -1551,12 +1575,28 @@ export async function registerRoutes(
         console.warn("Insforge storage serve failed, checking local files:", storageErr.message);
       }
 
-      // Fallback: look for the file in temp-uploads (matches by filename suffix)
+      // Fallback: look for the file in temp-uploads with strict path validation
+      if (!fs.existsSync(TEMP_UPLOAD_DIR)) {
+        return res.status(404).json({ error: "File not found" });
+      }
       const files = fs.readdirSync(TEMP_UPLOAD_DIR);
       const normalizedPath = filePath.replace(/\//g, '_');
+
+      // Only match if normalizedPath is specific enough (not just an extension)
+      if (normalizedPath.length < 8) {
+        return res.status(404).json({ error: "File not found" });
+      }
+
       const matchingFile = files.find(f => f.endsWith(normalizedPath));
       if (matchingFile) {
-        const localPath = path.join(TEMP_UPLOAD_DIR, matchingFile);
+        const localPath = path.resolve(TEMP_UPLOAD_DIR, matchingFile);
+        const resolvedTempDir = path.resolve(TEMP_UPLOAD_DIR);
+
+        // Ensure resolved path is within temp directory (prevents traversal)
+        if (!localPath.startsWith(resolvedTempDir)) {
+          return res.status(400).json({ error: "Invalid path" });
+        }
+
         const buffer = fs.readFileSync(localPath);
         const ext = path.extname(filePath).toLowerCase();
         const mimeMap: Record<string, string> = {
@@ -1573,7 +1613,7 @@ export async function registerRoutes(
 
       res.status(404).json({ error: "File not found" });
     } catch (error: any) {
-      console.error("Error serving file:", error);
+      console.error("Error serving file:", error.message);
       if (!res.headersSent) {
         res.status(404).json({ error: "File not found" });
       }

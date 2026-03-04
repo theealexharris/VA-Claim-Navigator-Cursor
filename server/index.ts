@@ -181,12 +181,15 @@ const allowedOrigins = [
 ];
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  const isDev = process.env.NODE_ENV !== "production";
   if (origin && (
     allowedOrigins.includes(origin) ||
-    origin.endsWith(".vercel.app") ||
-    origin.endsWith(".vaclaimnavigator.com") ||
-    origin.startsWith("http://localhost:") ||
-    origin.startsWith("http://127.0.0.1:")
+    // Only allow Vercel preview URLs matching our project (not any .vercel.app)
+    /^https:\/\/va-claim-navigator[a-z0-9-]*\.vercel\.app$/.test(origin) ||
+    // Only allow our own subdomains
+    origin === "https://app.vaclaimnavigator.com" ||
+    // Localhost only in development
+    (isDev && (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")))
   )) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
@@ -199,6 +202,16 @@ app.use((req, res, next) => {
   next();
 });
 
+
+// ─── Security headers ────────────────────────────────────────────────────────
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
 
 // ─── Stripe webhook (MUST be before express.json()) ─────────────────────────
 app.post(
@@ -230,10 +243,14 @@ app.post(
 );
 
 // ─── File upload: OPTIONS preflight (CORS) ──────────────────────────────────
-app.options('/api/storage/upload/*', (_req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+app.options('/api/storage/upload/*', (req, res) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'PUT, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
   res.status(204).end();
 });
@@ -344,17 +361,19 @@ app.put(
       }
       // When no auth: file is in temp; serverFilePath used for AI analysis. Evidence persists in client state.
 
+      // Return a fileId instead of the raw server path (don't leak internal paths)
+      const fileId = path.basename(serverFilePath);
       res.json({
         success: true,
         url: uploadResult?.url,
         key: uploadResult?.key,
         objectPath: `/objects/${storagePath}`,
-        serverFilePath,
+        fileId,
       });
     } catch (error: any) {
       console.error('[FILE UPLOAD] Error:', error.message, error.stack);
       if (!res.headersSent) {
-        res.status(500).json({ error: error.message || 'Upload failed' });
+        res.status(500).json({ error: 'Upload failed' });
       }
     }
   }
@@ -407,8 +426,10 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (reqPath.startsWith("/api")) {
       let logLine = `${req.method} ${reqPath} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      // Only log response body in development, and truncate to avoid logging sensitive data
+      if (capturedJsonResponse && process.env.NODE_ENV !== "production") {
+        const jsonStr = JSON.stringify(capturedJsonResponse);
+        logLine += ` :: ${jsonStr.length > 200 ? jsonStr.slice(0, 200) + "…" : jsonStr}`;
       }
       log(logLine);
     }
@@ -498,7 +519,11 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   const message = err.message || "Internal Server Error";
   console.error(`[ERROR] ${status}: ${message}`, err.stack ? `\n${err.stack}` : '');
   if (!res.headersSent) {
-    res.status(status).json({ message });
+    // In production, don't leak internal error details to clients
+    const safeMessage = process.env.NODE_ENV === "production" && status >= 500
+      ? "Internal Server Error"
+      : message;
+    res.status(status).json({ message: safeMessage });
   }
 });
 
