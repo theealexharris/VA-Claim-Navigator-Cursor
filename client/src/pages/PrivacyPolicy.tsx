@@ -22,7 +22,7 @@ export default function PrivacyPolicy() {
           
           <div className="prose prose-lg max-w-none">
             <p className="text-muted-foreground leading-relaxed mb-6">
-              Thank you for choosing to be part of our community at VA Claim Navigator Corporation, doing business as VA Claim Navigator Group ("VA Claim Navigator Group," "we," "us," or "our"). We are committed to protecting your personal information and your right to privacy. If you have any questions or concerns about this privacy notice or our practices with regard to your personal information, please contact us at info@VAClaimNavigator.com.
+              Thank you for choosing to be part of our community at VA Claim Navigator Corporation, doing business as VA Claim Navigator Group ("VA Claim Navigator Group," "we," "us," or "our"). We are committed to protecting your personal information and your right to privacy. If you have any questions or concerns about this privacy notice or our practices with regard to your personal information, please contact us at Admindesk@vaclaimnavigator.com.
             </p>
             
             <p className="text-muted-foreground leading-relaxed mb-6">
@@ -104,7 +104,7 @@ export default function PrivacyPolicy() {
               <strong>In Short:</strong> We do not knowingly collect data from children under 18.
             </p>
             <p className="text-muted-foreground leading-relaxed mb-6">
-              If you become aware of any data we may have collected from children under age 18, please contact us at info@VAClaimNavigator.com.
+              If you become aware of any data we may have collected from children under age 18, please contact us at Admindesk@vaclaimnavigator.com.
             </p>
             
             <h2 className="text-2xl font-serif font-bold text-primary mt-10 mb-4">7. What Are Your Privacy Rights?</h2>
@@ -125,7 +125,7 @@ export default function PrivacyPolicy() {
               VA Claim Navigator Corporation has not disclosed or sold any personal information to third parties for a business or commercial purpose in the preceding twelve (12) months. VA Claim Navigator Corporation will not sell personal information in the future belonging to website visitors, users, and other consumers.
             </p>
             <p className="text-muted-foreground leading-relaxed mb-6">
-              To exercise these rights, contact us at info@VAClaimNavigator.com.
+              To exercise these rights, contact us at Admindesk@vaclaimnavigator.com.
             </p>
             
             <h2 className="text-2xl font-serif font-bold text-primary mt-10 mb-4">10. Do We Make Updates To This Notice?</h2>
@@ -139,7 +139,7 @@ export default function PrivacyPolicy() {
             </p>
             <div className="bg-gray-50 p-6 rounded-lg mb-6">
               <p className="text-muted-foreground">
-                <strong>Email:</strong> info@VAClaimNavigator.com<br />
+                <strong>Email:</strong> Admindesk@vaclaimnavigator.com<br />
                 <strong>Mail:</strong><br />
                 VA Claim Navigator<br />
                 1885 FM 2673 #H16<br />

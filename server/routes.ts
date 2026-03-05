@@ -1398,7 +1398,7 @@ export async function registerRoutes(
       const { name, email, subject, message, contactType } = parseResult.data;
       
       const primaryEmail = contactType === "admin" 
-        ? "Frontdesk@vaclaimnavigator.com" 
+        ? "Admindesk@vaclaimnavigator.com"
         : "Billing@vaclaimnavigator.com";
       const bccEmail = "vaclaimnavigatorcontact@gmail.com";
       
