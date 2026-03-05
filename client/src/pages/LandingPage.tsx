@@ -66,12 +66,11 @@ export default function LandingPage() {
   useEffect(() => {
     const video = videoRef.current;
     if (video) {
+      // Browsers require muted for autoplay — user can unmute via controls
       video.muted = true;
-      video.play().then(() => {
-        video.muted = false;
-      }).catch(() => {
-        // Autoplay blocked, keep muted and try again
-        video.play().catch(() => {});
+      video.currentTime = 0;
+      video.play().catch(() => {
+        // Autoplay blocked by browser policy; video will wait for user interaction
       });
     }
   }, []);
@@ -451,7 +450,7 @@ export default function LandingPage() {
               <CardHeader className="text-center pb-2 pt-6">
                 <CardTitle className="text-2xl font-serif text-primary">PRO</CardTitle>
                 <CardDescription className="text-sm">
-                  Complete toolkit for serious claim preparation
+                  Complete Do-It-Yourself toolkit for VA Disability Claim generation
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-4">
@@ -470,13 +469,16 @@ export default function LandingPage() {
                   <PricingFeature>Statement Builders</PricingFeature>
                   <PricingFeature>Priority Support</PricingFeature>
                 </ul>
-                <Button 
-                  className="w-full h-11 font-semibold bg-secondary text-secondary-foreground hover:bg-secondary/90" 
+                <Button
+                  className="w-full h-11 font-semibold bg-secondary text-secondary-foreground hover:bg-secondary/90"
                   data-testid="button-pro"
                   onClick={() => handlePaidTierClick("Pro", "$97")}
                 >
                   Go Pro
                 </Button>
+                <p className="text-xs text-center text-muted-foreground mt-3 italic">
+                  $97 is a maintenance and technology user's fee.
+                </p>
               </CardContent>
             </Card>
 
