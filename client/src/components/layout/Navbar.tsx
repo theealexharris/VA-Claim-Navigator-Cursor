@@ -2,7 +2,8 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Menu } from "lucide-react";
-import { useCallback } from "react";
+import { useState } from "react";
+import { ContactFormModal } from "@/components/ContactFormModal";
 
 function scrollToSection(e: React.MouseEvent<HTMLAnchorElement>, sectionId: string) {
   e.preventDefault();
@@ -14,6 +15,7 @@ function scrollToSection(e: React.MouseEvent<HTMLAnchorElement>, sectionId: stri
 
 export function Navbar() {
   const [location] = useLocation();
+  const [contactOpen, setContactOpen] = useState(false);
   const isPublic = location === "/" || location === "/login" || location === "/signup";
 
   if (!isPublic) return null;
@@ -29,6 +31,7 @@ export function Navbar() {
         {/* Desktop Nav */}
         <div className="hidden md:flex items-center gap-8">
           <a href="#features" onClick={(e) => scrollToSection(e, 'features')} className="font-semibold text-primary hover:text-primary/80 transition-colors cursor-pointer">Features</a>
+          <button onClick={() => setContactOpen(true)} className="font-semibold text-primary hover:text-primary/80 transition-colors cursor-pointer bg-transparent border-none p-0">Contact Us</button>
           <a href="#how-it-works" onClick={(e) => scrollToSection(e, 'how-it-works')} className="font-semibold text-primary hover:text-primary/80 transition-colors cursor-pointer">How it Works</a>
           <a href="#pricing" onClick={(e) => scrollToSection(e, 'pricing')} className="font-semibold text-primary hover:text-primary/80 transition-colors cursor-pointer">Pricing</a>
           <div className="flex items-center gap-4 ml-4">
@@ -58,6 +61,7 @@ export function Navbar() {
             <SheetContent>
               <div className="flex flex-col gap-6 mt-8">
                 <a href="#features" onClick={(e) => scrollToSection(e, 'features')} className="text-lg font-medium cursor-pointer">Features</a>
+                <button onClick={() => setContactOpen(true)} className="text-lg font-medium cursor-pointer bg-transparent border-none p-0 text-left">Contact Us</button>
                 <a href="#how-it-works" onClick={(e) => scrollToSection(e, 'how-it-works')} className="text-lg font-medium cursor-pointer">How it Works</a>
                 <a href="#pricing" onClick={(e) => scrollToSection(e, 'pricing')} className="text-lg font-medium cursor-pointer">Pricing</a>
                 <Link href="/login">
@@ -75,6 +79,8 @@ export function Navbar() {
           </Sheet>
         </div>
       </div>
+
+      <ContactFormModal open={contactOpen} onOpenChange={setContactOpen} />
     </nav>
   );
 }
