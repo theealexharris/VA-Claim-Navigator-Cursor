@@ -159,7 +159,7 @@ export async function registerUser(email: string, password: string, name?: strin
  * Returns: { user, accessToken, refreshToken }
  */
 export async function signInUser(email: string, password: string) {
-  console.log(`[INSFORGE AUTH] signIn called for: ${email}`);
+  console.log(`[INSFORGE AUTH] signIn called`);
 
   let res: globalThis.Response;
   try {

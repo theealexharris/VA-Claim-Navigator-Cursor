@@ -1,16 +1,17 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import rateLimit from "express-rate-limit";
 import { InsforgeStorageService } from "./insforge-storage-service";
 import { isInsforgeAnonKeyConfigured } from "./insforge";
-import { 
-  registerUser, 
-  signInUser, 
+import {
+  registerUser,
+  signInUser,
   signOutUser,
   requireInsforgeAuth,
   optionalInsforgeAuth,
   getInsforgeSession,
   refreshAccessToken,
-  verifyEmailDirect 
+  verifyEmailDirect
 } from "./insforge-auth";
 import { insforgeStorage } from "./insforge-storage";
 import { z } from "zod";
@@ -20,6 +21,31 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import { TEMP_UPLOAD_DIR } from "./constants";
+
+// ─── Rate limiters ───────────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many attempts. Please try again in 15 minutes." },
+});
+
+const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many contact requests. Please try again in an hour." },
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many AI requests. Please try again later." },
+});
 
 /** Return a safe error message for 500s — never leak internal details in production */
 function safeErrorMessage(error: any, fallback = "An unexpected error occurred"): string {
@@ -49,7 +75,7 @@ export async function registerRoutes(
     if (existing) return existing;
 
     // Step 2: Row not found (or SELECT silently failed due to RLS) — attempt INSERT
-    console.log("[ENSURE-USER-ROW] No user row found, creating for:", userId, email);
+    console.log("[ENSURE-USER-ROW] No user row found, creating for:", userId);
     try {
       const created = await storage.createUser({
         id: userId,
@@ -146,7 +172,7 @@ export async function registerRoutes(
   });
 
   // Auth routes
-  app.post("/api/auth/register", async (req, res) => {
+  app.post("/api/auth/register", authLimiter, async (req, res) => {
     try {
       const configErr = getAuthConfigError();
       if (configErr) {
@@ -175,7 +201,7 @@ export async function registerRoutes(
 
       const fullName = `${firstName} ${lastName}`.trim() || undefined;
 
-      console.log(`[REGISTER] Attempting registration for: ${email}`);
+      console.log(`[REGISTER] Attempting registration`);
       
       const result = await registerUser(email, password, fullName);
       
@@ -240,7 +266,7 @@ export async function registerRoutes(
         }
       }
       
-      console.log(`[REGISTER] Success for: ${email}`);
+      console.log(`[REGISTER] Success`);
       
       // Return stored profile so dashboard can be populated from navigator data
       const apiUser = dbUser ? dbUserToApiUser(dbUser) : { id: result.user.id, email: result.user.email, firstName: firstName ?? "", lastName: lastName ?? "" };
@@ -275,7 +301,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", authLimiter, async (req, res) => {
     try {
       const configErr = getAuthConfigError();
       if (configErr) {
@@ -289,7 +315,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Email and password are required" });
       }
 
-      console.log(`[LOGIN] Attempting login for: ${email}`);
+      console.log(`[LOGIN] Attempting login`);
       
       const result = await signInUser(email, password);
       
@@ -1231,7 +1257,7 @@ export async function registerRoutes(
   });
 
   // AI Research Routes
-  app.post("/api/ai/research", async (req, res) => {
+  app.post("/api/ai/research", aiLimiter, async (req, res) => {
     try {
       const { feature, query, context } = req.body;
       
@@ -1256,7 +1282,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/ai/condition-guidance", async (req, res) => {
+  app.post("/api/ai/condition-guidance", aiLimiter, async (req, res) => {
     try {
       const { conditionName } = req.body;
 
@@ -1509,7 +1535,7 @@ export async function registerRoutes(
     contactType: z.enum(["admin", "billing"])
   });
 
-  app.post("/api/contact", async (req, res) => {
+  app.post("/api/contact", contactLimiter, async (req, res) => {
     try {
       const parseResult = contactSchema.safeParse(req.body);
       if (!parseResult.success) {
@@ -1521,33 +1547,15 @@ export async function registerRoutes(
 
       const { name, email, subject, message, contactType } = parseResult.data;
       
-      const primaryEmail = contactType === "admin" 
-        ? "Admindesk@vaclaimnavigator.com"
-        : "Billing@vaclaimnavigator.com";
-      const bccEmail = "vaclaimnavigatorcontact@gmail.com";
-      
-      // Contact form submitted - email integration placeholder
-      // In production, integrate with email service (SendGrid, Resend, etc.)
+      console.log(`[CONTACT] Form submission received from ${name}`);
 
-      res.json({ 
-        success: true, 
-        message: "Your message has been sent successfully" 
+      res.json({
+        success: true,
+        message: "Your message has been received. We'll be in touch shortly."
       });
     } catch (error: any) {
       console.error("Contact form error:", error);
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  // Diagnostic endpoint to check promo codes (admin only - remove in production)
-  app.get("/api/stripe/promo-codes", requireInsforgeAuth(), async (req, res) => {
-    try {
-      const { stripeService } = await import("./stripeService");
-      const promoCodes = await stripeService.listPromotionCodes();
-      res.json({ promoCodes });
-    } catch (error: any) {
-      console.error("Error fetching promo codes:", error);
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: safeErrorMessage(error) });
     }
   });
 

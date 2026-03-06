@@ -4,18 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { Mail, Loader2, Send } from "lucide-react";
-import { CONTACT_EMAIL_ADMIN } from "@/lib/contact";
+import { Mail, Send } from "lucide-react";
+import { CONTACT_EMAIL_ADMIN, CONTACT_EMAIL_BILLING } from "@/lib/contact";
 
 interface ContactFormModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  contactType?: "admin" | "billing";
 }
 
-export function ContactFormModal({ open, onOpenChange }: ContactFormModalProps) {
-  const { toast } = useToast();
-  const [isSubmitting, setIsSubmitting] = useState(false);
+export function ContactFormModal({ open, onOpenChange, contactType = "admin" }: ContactFormModalProps) {
+  const to = contactType === "billing" ? CONTACT_EMAIL_BILLING : CONTACT_EMAIL_ADMIN;
+
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -27,34 +27,16 @@ export function ContactFormModal({ open, onOpenChange }: ContactFormModalProps) 
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setIsSubmitting(true);
-    try {
-      const res = await fetch("/api/contact", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, contactType: "admin" }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.message || "Failed to send message");
-      }
-      toast({
-        title: "Message Sent!",
-        description: `Your message has been sent to ${CONTACT_EMAIL_ADMIN}. We'll be in touch shortly.`,
-      });
-      setForm({ name: "", email: "", subject: "", message: "" });
-      onOpenChange(false);
-    } catch (err: any) {
-      toast({
-        title: "Error",
-        description: err?.message || "Failed to send message. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+    const body = `From: ${form.name}\nEmail: ${form.email}\n\n${form.message}`;
+    const mailtoUrl =
+      `mailto:${to}` +
+      `?subject=${encodeURIComponent(`[Contact] ${form.subject}`)}` +
+      `&body=${encodeURIComponent(body)}`;
+    window.location.href = mailtoUrl;
+    setForm({ name: "", email: "", subject: "", message: "" });
+    onOpenChange(false);
   }
 
   return (
@@ -66,7 +48,7 @@ export function ContactFormModal({ open, onOpenChange }: ContactFormModalProps) 
             Contact Us
           </DialogTitle>
           <p className="text-sm text-muted-foreground pt-1">
-            Send us a message and we'll get back to you as soon as possible.
+            Fill out the form — clicking Send will open your email client with the message ready to go.
           </p>
         </DialogHeader>
 
@@ -81,7 +63,6 @@ export function ContactFormModal({ open, onOpenChange }: ContactFormModalProps) 
                 onChange={handleChange}
                 placeholder="Your name"
                 required
-                disabled={isSubmitting}
               />
             </div>
             <div className="space-y-2">
@@ -94,7 +75,6 @@ export function ContactFormModal({ open, onOpenChange }: ContactFormModalProps) 
                 onChange={handleChange}
                 placeholder="you@example.com"
                 required
-                disabled={isSubmitting}
               />
             </div>
           </div>
@@ -108,7 +88,6 @@ export function ContactFormModal({ open, onOpenChange }: ContactFormModalProps) 
               onChange={handleChange}
               placeholder="How can we help?"
               required
-              disabled={isSubmitting}
             />
           </div>
 
@@ -122,35 +101,24 @@ export function ContactFormModal({ open, onOpenChange }: ContactFormModalProps) 
               placeholder="Tell us more about your question or concern..."
               rows={5}
               required
-              disabled={isSubmitting}
             />
           </div>
 
           <div className="flex justify-between items-center pt-2">
             <p className="text-xs text-muted-foreground">
-              Replies sent to: <span className="font-medium">{CONTACT_EMAIL_ADMIN}</span>
+              Sending to: <span className="font-medium">{to}</span>
             </p>
             <div className="flex gap-3">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => onOpenChange(false)}
-                disabled={isSubmitting}
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting} className="gap-2">
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Sending…
-                  </>
-                ) : (
-                  <>
-                    <Send className="h-4 w-4" />
-                    Send Message
-                  </>
-                )}
+              <Button type="submit" className="gap-2">
+                <Send className="h-4 w-4" />
+                Send Message
               </Button>
             </div>
           </div>
