@@ -70,13 +70,12 @@ export async function registerRoutes(
   // Returns the user row (snake_case from DB) — either existing or newly created.
   // Callers that don't need the row can ignore the return value.
   async function ensureUserRow(userId: string, email: string, accessToken: string): Promise<any> {
-    // Step 1: Try to fetch existing row using user's token (respects RLS read policy)
+    // Step 1: Try to fetch existing row by ID (user-token, respects RLS read policy)
     const existing = await storage.getUser(userId, accessToken);
     if (existing) return existing;
 
     // Step 2: Row not found — INSERT using service-level client (no accessToken).
-    // User-scoped tokens are blocked by RLS from inserting into the users table;
-    // the anon/service client has the required INSERT permission.
+    // User-scoped tokens are blocked by RLS from inserting into the users table.
     console.log("[ENSURE-USER-ROW] No user row found, creating for:", userId);
     try {
       const created = await storage.createUser({
@@ -87,24 +86,41 @@ export async function registerRoutes(
         role: "user",
         two_factor_enabled: false,
         profile_completed: false,
-      }); // No accessToken → uses service-level insforge client, bypasses RLS INSERT restriction
+      }); // No accessToken → service-level client bypasses RLS INSERT restriction
       console.log("[ENSURE-USER-ROW] Created user row for:", userId);
       if (created) return created;
-      // INSERT succeeded but RETURNING was blocked (RLS on SELECT) — row IS in DB, use synthetic
-      console.warn("[ENSURE-USER-ROW] INSERT returned no data for:", userId, "— using synthetic row");
+      // INSERT succeeded but RETURNING blocked by RLS — row IS in DB
+      console.warn("[ENSURE-USER-ROW] INSERT returned no data for:", userId, "— using synthetic");
       return { id: userId, email, stripe_customer_id: null, stripe_subscription_id: null, subscription_tier: "starter", role: "user" };
     } catch (err: any) {
       const msg = err?.message || "";
       if (/duplicate|unique|23505/i.test(msg)) {
-        // Row already exists (race condition or prior insert) — fetch it
-        console.log("[ENSURE-USER-ROW] Race condition (duplicate key), re-fetching:", userId);
-        const refetch = await storage.getUser(userId, accessToken);
-        if (refetch) return refetch;
-        // Row exists but unreadable (RLS SELECT restriction) — row IS in DB, synthetic is safe
-        console.warn("[ENSURE-USER-ROW] Row exists but unreadable, using synthetic:", userId);
+        // A row with this id OR email already exists.
+        // First: try re-fetch by ID (fastest path — handles true race conditions)
+        console.log("[ENSURE-USER-ROW] Duplicate key on INSERT, re-fetching by ID:", userId);
+        const byId = await storage.getUser(userId, accessToken);
+        if (byId) return byId;
+
+        // ID re-fetch returned nothing → the duplicate is on EMAIL, not ID.
+        // There is a stale users row with the same email but a different (old) ID.
+        // Look it up so FK-dependent inserts use the real DB row id.
+        console.warn("[ENSURE-USER-ROW] ID not found after duplicate — trying email fallback:", email);
+        const byEmail = await storage.getUserByEmail(email, accessToken);
+        if (byEmail) {
+          console.log("[ENSURE-USER-ROW] Resolved via email. DB id:", byEmail.id, "| session id:", userId);
+          return byEmail;
+        }
+        // RLS may block the user-token email read — retry with service-level client
+        const byEmailService = await storage.getUserByEmail(email);
+        if (byEmailService) {
+          console.log("[ENSURE-USER-ROW] Resolved via email (service client). DB id:", byEmailService.id);
+          return byEmailService;
+        }
+        // Completely unreadable — last-resort synthetic (FK will likely fail; log for investigation)
+        console.error("[ENSURE-USER-ROW] Cannot resolve user row by ID or email:", userId, email);
         return { id: userId, email, stripe_customer_id: null, stripe_subscription_id: null, subscription_tier: "starter", role: "user" };
       }
-      // Any other error is critical — surface it so the caller returns a clear 500
+      // Non-duplicate error is critical
       console.error("[ENSURE-USER-ROW] CRITICAL: Could not create user row:", msg);
       throw new Error(`Cannot initialize user record: ${msg}`);
     }
@@ -653,8 +669,11 @@ export async function registerRoutes(
       const session = (req as any).insforgeSession;
       console.log("[SERVICE-HISTORY POST] userId:", session.user.id, "| body keys:", Object.keys(req.body));
 
-      // Ensure users row exists (service_history has FK → users.id)
-      await ensureUserRow(session.user.id, session.user.email, session.accessToken);
+      // Ensure users row exists (service_history has FK → users.id).
+      // Use the RETURNED row's id — it may differ from session.user.id if a stale row
+      // exists in the DB with this email but a different (older) primary key.
+      const userRow = await ensureUserRow(session.user.id, session.user.email, session.accessToken);
+      const effectiveUserId = userRow?.id ?? session.user.id;
 
       // Build the snake_case DB row directly (avoid Zod type mismatches with Date vs string)
       const dateEnteredRaw = req.body.dateEntered;
@@ -671,7 +690,7 @@ export async function registerRoutes(
       }
 
       const dbRow: Record<string, any> = {
-        user_id: session.user.id,
+        user_id: effectiveUserId,
         branch: req.body.branch,
         component: req.body.component,
         date_entered: new Date(dateEnteredRaw).toISOString(),
@@ -751,10 +770,11 @@ export async function registerRoutes(
     try {
       const session = (req as any).insforgeSession;
       // Ensure users row exists (medical_conditions has FK → users.id)
-      await ensureUserRow(session.user.id, session.user.email, session.accessToken);
+      const userRow = await ensureUserRow(session.user.id, session.user.email, session.accessToken);
+      const effectiveUserId = userRow?.id ?? session.user.id;
       const body = {
         ...req.body,
-        userId: session.user.id,
+        userId: effectiveUserId,
         diagnosedDate: req.body.diagnosedDate ? new Date(req.body.diagnosedDate) : null,
       };
       const data = insertMedicalConditionSchema.parse(body);
@@ -839,8 +859,9 @@ export async function registerRoutes(
     try {
       const session = (req as any).insforgeSession;
       // Ensure users row exists (claims has FK → users.id)
-      await ensureUserRow(session.user.id, session.user.email, session.accessToken);
-      const data = insertClaimSchema.parse({ ...req.body, userId: session.user.id });
+      const userRow = await ensureUserRow(session.user.id, session.user.email, session.accessToken);
+      const effectiveUserId = userRow?.id ?? session.user.id;
+      const data = insertClaimSchema.parse({ ...req.body, userId: effectiveUserId });
       const claim = await storage.createClaim(data, session.accessToken);
       res.json(claim);
     } catch (error: any) {
