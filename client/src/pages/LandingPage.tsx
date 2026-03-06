@@ -576,7 +576,7 @@ export default function LandingPage() {
         <div className="container mx-auto px-4 text-center relative z-10">
           <h2 className="text-4xl md:text-5xl font-serif font-bold mb-6 text-primary">Ready to Take Control of Your Future?</h2>
           <p className="text-xl text-muted-foreground mb-10 max-w-2xl mx-auto">
-            Join other Veterans who have successfully filed disability claims using our disability statement generator.
+            Join other Veterans who have successfully filed disability claims statement, using our disability statement generator.
           </p>
           <Link href="/signup">
             <Button size="lg" className="h-16 px-10 text-xl font-bold bg-secondary text-secondary-foreground hover:bg-secondary/90 shadow-xl">

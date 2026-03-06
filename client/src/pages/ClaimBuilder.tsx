@@ -144,12 +144,14 @@ export default function ClaimBuilder() {
   const [conditionIdsViewed, setConditionIdsViewed] = useState<Set<string>>(new Set());
   const [conditions, setConditions] = useState<Condition[]>([]);
 
-  // When on step 3 (Symptoms & Severity), mark the currently viewed condition as "clicked"
+  // When on step 3 (Symptoms & Severity), mark ALL conditions as "clicked" so the
+  // Continue button is never permanently blocked by un-clicked tabs. Individual tab
+  // clicks still update the set (via the tab onClick handler) for UI highlighting.
   useEffect(() => {
-    if (currentStep === 3 && conditions[activeConditionIndex]?.id) {
-      setConditionIdsViewed((prev) => new Set(prev).add(conditions[activeConditionIndex].id));
+    if (currentStep === 3 && conditions.length > 0) {
+      setConditionIdsViewed(new Set(conditions.map((c) => c.id)));
     }
-  }, [currentStep, activeConditionIndex, conditions]);
+  }, [currentStep, conditions]);
 
   // Route guard: Check workflow progress
   useEffect(() => {
