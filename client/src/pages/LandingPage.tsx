@@ -566,7 +566,7 @@ export default function LandingPage() {
           </div>
 
           <p className="text-sm text-center text-muted-foreground mt-8 max-w-3xl mx-auto italic">
-            $97 fee is solely for access to the software platform, its document-generation tools, and maintenance for use of platform. Fees are not connected to the preparation, filing, outcome, or success of any VA disability claim.
+            Fees are solely for access to the software platform, its document-generation tools, maintenance for use of platform and/or any consulting/coaching/educating. Fees are not connected to official VA document preparation, filing, outcome, or success of any VA disability claim or documents filed.
           </p>
         </div>
       </section>
