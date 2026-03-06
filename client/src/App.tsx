@@ -29,6 +29,7 @@ import Notifications from "@/pages/Notifications";
 import ConsultationBooking from "@/pages/ConsultationBooking";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import TermsOfService from "@/pages/TermsOfService";
+import ComplianceNotice from "@/pages/ComplianceNotice";
 
 function Router() {
   return (
@@ -40,6 +41,7 @@ function Router() {
       <Route path="/book-consultation" component={ConsultationBooking} />
       <Route path="/privacy-policy" component={PrivacyPolicy} />
       <Route path="/terms-of-service" component={TermsOfService} />
+      <Route path="/compliance-notice" component={ComplianceNotice} />
       
       {/* Dashboard Routes - Protected */}
       <Route path="/dashboard">

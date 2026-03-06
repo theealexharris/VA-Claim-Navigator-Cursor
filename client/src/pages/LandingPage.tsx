@@ -233,7 +233,7 @@ export default function LandingPage() {
               </h1>
               
               <p className="text-xl text-muted-foreground leading-relaxed max-w-lg">
-                Stop fighting the VA alone. Our intelligent platform guides you through every step of your disability claim, ensuring accuracy and maximizing your success.
+                Stop fighting the VA alone. Our intelligent platform guides you through every step of your disability claim statement, ensuring accuracy and maximizing your success.
               </p>
               
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
@@ -305,9 +305,9 @@ export default function LandingPage() {
         <div className="container mx-auto px-4">
           <div className="text-center max-w-3xl mx-auto mb-16">
             <h2 className="text-2xl md:text-3xl font-extrabold text-secondary uppercase tracking-wider mb-2">HOW IT WORKS</h2>
-            <h3 className="text-3xl md:text-4xl font-serif font-bold text-primary mb-4">Three Simple Steps to Your Claim</h3>
+            <h3 className="text-3xl md:text-4xl font-serif font-bold text-primary mb-4">Three Simple Steps to Your Claim Statement</h3>
             <p className="text-lg text-muted-foreground">
-              Our streamlined process takes the confusion out of filing your VA disability claim.
+              Our streamlined process takes the confusion out of articulating your VA Disability Supplemental Statement in support of your claims.
             </p>
           </div>
           
@@ -331,7 +331,7 @@ export default function LandingPage() {
                 <span className="text-3xl font-bold text-secondary">3</span>
               </div>
               <h4 className="text-xl font-bold text-primary mb-3 font-serif">Submit With Confidence</h4>
-              <p className="text-muted-foreground">Review your complete claim package and submit knowing you have the strongest case possible.</p>
+              <p className="text-muted-foreground">Review your self-generated supplemental Claim Statement and you can submit knowing you have the strongest case possible.</p>
             </div>
           </div>
         </div>
@@ -412,7 +412,7 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto" id="pricing-grid">
             {/* Starter Plan */}
             <Card className="relative border-2 border-primary hover:shadow-xl transition-shadow">
               <CardHeader className="text-center pb-2">
@@ -450,7 +450,7 @@ export default function LandingPage() {
               <CardHeader className="text-center pb-2 pt-6">
                 <CardTitle className="text-2xl font-serif text-primary">PRO</CardTitle>
                 <CardDescription className="text-sm">
-                  Complete Do-It-Yourself toolkit for VA Disability Claim generation
+                  Complete Do-It-Yourself toolkit for VA Disability Supplemental Claim Statement generation
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-4">
@@ -476,9 +476,6 @@ export default function LandingPage() {
                 >
                   Go Pro
                 </Button>
-                <p className="text-xs text-center text-muted-foreground mt-3 italic">
-                  $97 is a maintenance and technology user's fee.
-                </p>
               </CardContent>
             </Card>
 
@@ -492,7 +489,7 @@ export default function LandingPage() {
               <CardHeader className="text-center pb-2 pt-6">
                 <CardTitle className="text-2xl font-serif text-primary">DELUXE</CardTitle>
                 <CardDescription className="text-sm">
-                  Full-Service 1:1 Coaching and Consulting
+                  Full-Service 1:1 Coaching and supplemental statement preparation
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-4">
@@ -509,8 +506,7 @@ export default function LandingPage() {
                   <PricingFeature>Live 1-on-1 coaching sessions</PricingFeature>
                   <PricingFeature>Personal Assigned Case Consultant</PricingFeature>
                   <PricingFeature>Live Intake</PricingFeature>
-                  <PricingFeature>Live Claims Review and Audit</PricingFeature>
-                  <PricingFeature>Live Claims Drafting Support</PricingFeature>
+                  <PricingFeature>Live Review and Audit to support Supplemental Statement</PricingFeature>
                   <PricingFeature>Live Draft Review and Editing</PricingFeature>
                   <PricingFeature>Live Final Submission Walk-thru</PricingFeature>
                 </ul>
@@ -568,6 +564,10 @@ export default function LandingPage() {
               </CardContent>
             </Card>
           </div>
+
+          <p className="text-sm text-center text-muted-foreground mt-8 max-w-3xl mx-auto italic">
+            $97 fee is solely for access to the software platform, its document-generation tools, and maintenance for use of platform. Fees are not connected to the preparation, filing, outcome, or success of any VA disability claim.
+          </p>
         </div>
       </section>
 
@@ -576,7 +576,7 @@ export default function LandingPage() {
         <div className="container mx-auto px-4 text-center relative z-10">
           <h2 className="text-4xl md:text-5xl font-serif font-bold mb-6 text-primary">Ready to Take Control of Your Future?</h2>
           <p className="text-xl text-muted-foreground mb-10 max-w-2xl mx-auto">
-            Join thousands of veterans who have successfully increased their rating with our guided system.
+            Join other Veterans who have successfully filed disability claims using our disability statement generator.
           </p>
           <Link href="/signup">
             <Button size="lg" className="h-16 px-10 text-xl font-bold bg-secondary text-secondary-foreground hover:bg-secondary/90 shadow-xl">

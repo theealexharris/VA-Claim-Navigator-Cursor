@@ -60,6 +60,7 @@ export function Footer() {
             <ul className="space-y-2">
               <li><Link href="/privacy-policy" className="text-primary-foreground/80 hover:text-white transition-colors">Privacy Policy</Link></li>
               <li><Link href="/terms-of-service" className="text-primary-foreground/80 hover:text-white transition-colors">Terms of Service and Conditions</Link></li>
+              <li><Link href="/compliance-notice" className="text-primary-foreground/80 hover:text-white transition-colors">VA Claim Navigator-Software Platform Compliance Notice</Link></li>
             </ul>
           </div>
         </div>
