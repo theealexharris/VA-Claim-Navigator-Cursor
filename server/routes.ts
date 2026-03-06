@@ -38,20 +38,36 @@ export async function registerRoutes(
    * Ensure a users row exists for this session user.
    * All other tables (service_history, medical_conditions, claims, etc.) have FK → users.id.
    * If the row doesn't exist yet (e.g. user registered before the createUser flow was added),
-   * we silently create a minimal placeholder row so FK inserts don't fail.
+   * we create a minimal placeholder row so FK inserts don't fail.
+   * THROWS on critical failures (non-duplicate) so the caller can return a clear error.
    */
   async function ensureUserRow(userId: string, email: string, accessToken: string): Promise<void> {
     try {
       const existing = await storage.getUser(userId, accessToken);
-      if (!existing) {
-        await storage.createUser({ id: userId, email, password: "" }, accessToken);
-        console.log("[ENSURE-USER-ROW] Created missing user row for:", userId);
-      }
+      if (existing) return; // Row already exists
+
+      console.log("[ENSURE-USER-ROW] No user row found, creating for:", userId, email);
+      // Include explicit defaults for all NOT NULL columns to be safe
+      await storage.createUser({
+        id: userId,
+        email,
+        password: "",
+        subscription_tier: "starter",
+        role: "user",
+        two_factor_enabled: false,
+        profile_completed: false,
+      }, accessToken);
+      console.log("[ENSURE-USER-ROW] Created missing user row for:", userId);
     } catch (err: any) {
-      if (!/duplicate|unique|23505/i.test(err?.message || "")) {
-        console.warn("[ENSURE-USER-ROW] Could not create user row:", err?.message);
+      const msg = err?.message || "";
+      // Duplicate key = another request created it between our check and insert — that's fine
+      if (/duplicate|unique|23505/i.test(msg)) {
+        console.log("[ENSURE-USER-ROW] Row already exists (race condition), continuing:", userId);
+        return;
       }
-      // Ignore duplicate errors (row was created between check and insert)
+      // Any other error is critical — throw so the caller returns a clear error
+      console.error("[ENSURE-USER-ROW] CRITICAL: Could not create user row:", msg);
+      throw new Error(`Cannot initialize user record: ${msg}`);
     }
   }
 
@@ -185,6 +201,10 @@ export async function registerRoutes(
             password: "", // Auth is handled by Insforge; placeholder for DB NOT NULL
             first_name: firstName ?? authUser.firstName ?? (authUser.profile?.name || "").split(" ")[0] ?? "",
             last_name: lastName ?? authUser.lastName ?? (authUser.profile?.name || "").split(" ").slice(1).join(" ") ?? "",
+            subscription_tier: "starter",
+            role: "user",
+            two_factor_enabled: false,
+            profile_completed: false,
           };
           dbUser = await storage.createUser(userRow, result.accessToken);
           console.log(`[REGISTER] User saved to navigator: ${authUser.id}`);
@@ -282,6 +302,10 @@ export async function registerRoutes(
               password: "",
               first_name: nameParts[0] ?? "",
               last_name: nameParts.slice(1).join(" ") ?? "",
+              subscription_tier: "starter",
+              role: "user",
+              two_factor_enabled: false,
+              profile_completed: false,
             };
             dbUser = await storage.createUser(userRow, result.accessToken);
             console.log(`[LOGIN] User saved to navigator: ${authUser.id}`);
@@ -371,6 +395,10 @@ export async function registerRoutes(
               password: "",
               first_name: nameParts[0] ?? "",
               last_name: nameParts.slice(1).join(" ") ?? "",
+              subscription_tier: "starter",
+              role: "user",
+              two_factor_enabled: false,
+              profile_completed: false,
             }, data.accessToken);
           }
         } catch (dbErr: any) {
@@ -517,6 +545,10 @@ export async function registerRoutes(
             id: user.id,
             email: user.email,
             password: "", // Placeholder — real auth is handled by Insforge SDK
+            subscription_tier: "starter",
+            role: "user",
+            two_factor_enabled: false,
+            profile_completed: false,
             ...dbUpdates,
           }, session.accessToken);
           console.log("[PROFILE PATCH] Created missing user row for:", user.id);
@@ -580,34 +612,42 @@ export async function registerRoutes(
   app.post("/api/service-history", requireInsforgeAuth(), async (req, res) => {
     try {
       const session = (req as any).insforgeSession;
+      console.log("[SERVICE-HISTORY POST] userId:", session.user.id, "| body keys:", Object.keys(req.body));
+
       // Ensure users row exists (service_history has FK → users.id)
       await ensureUserRow(session.user.id, session.user.email, session.accessToken);
 
-      const body = {
-        ...req.body,
-        userId: session.user.id,
-        dateEntered: req.body.dateEntered ? new Date(req.body.dateEntered) : undefined,
-        dateSeparated: req.body.dateSeparated ? new Date(req.body.dateSeparated) : null,
-      };
-      const data = insertServiceHistorySchema.parse(body);
-      // Convert camelCase schema output to snake_case DB columns
+      // Build the snake_case DB row directly (avoid Zod type mismatches with Date vs string)
+      const dateEnteredRaw = req.body.dateEntered;
+      const dateSeparatedRaw = req.body.dateSeparated;
+
+      if (!dateEnteredRaw) {
+        return res.status(400).json({ message: "dateEntered is required" });
+      }
+      if (!req.body.branch) {
+        return res.status(400).json({ message: "branch is required" });
+      }
+      if (!req.body.component) {
+        return res.status(400).json({ message: "component is required" });
+      }
+
       const dbRow: Record<string, any> = {
-        user_id: data.userId,
-        branch: data.branch,
-        component: data.component,
-        date_entered: data.dateEntered instanceof Date ? data.dateEntered.toISOString() : data.dateEntered,
-        date_separated: data.dateSeparated instanceof Date ? data.dateSeparated.toISOString() : data.dateSeparated ?? null,
-        mos: data.mos ?? null,
-        deployments: data.deployments ?? null,
+        user_id: session.user.id,
+        branch: req.body.branch,
+        component: req.body.component,
+        date_entered: new Date(dateEnteredRaw).toISOString(),
+        date_separated: dateSeparatedRaw ? new Date(dateSeparatedRaw).toISOString() : null,
+        mos: req.body.mos || null,
+        deployments: req.body.deployments || null,
       };
+
+      console.log("[SERVICE-HISTORY POST] Inserting row:", JSON.stringify(dbRow).substring(0, 300));
       const history = await storage.createServiceHistory(dbRow, session.accessToken);
+      console.log("[SERVICE-HISTORY POST] Success, id:", history?.id);
       res.json(history);
     } catch (error: any) {
       console.error("[SERVICE-HISTORY POST] Error:", error.message);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid input", errors: error.errors });
-      }
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: error.message || "Failed to save service history" });
     }
   });
 

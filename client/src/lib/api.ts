@@ -247,7 +247,10 @@ export async function updateProfile(updates: Partial<User>) {
 // Service History API
 export async function getServiceHistory(): Promise<ServiceHistory[]> {
   const res = await authFetch("/api/service-history");
-  if (!res.ok) throw new Error("Failed to fetch service history");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch service history (${res.status})`);
+  }
   return res.json();
 }
 
@@ -256,7 +259,10 @@ export async function createServiceHistory(data: Omit<ServiceHistory, "id" | "us
     method: "POST",
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to create service history");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to create service history (${res.status})`);
+  }
   return res.json();
 }
 
@@ -265,20 +271,29 @@ export async function updateServiceHistory(id: string, updates: Partial<ServiceH
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error("Failed to update service history");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to update service history (${res.status})`);
+  }
   return res.json();
 }
 
 export async function deleteServiceHistory(id: string) {
   const res = await authFetch(`/api/service-history/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete service history");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to delete service history (${res.status})`);
+  }
   return res.json();
 }
 
 // Medical Conditions API
 export async function getMedicalConditions(): Promise<MedicalCondition[]> {
   const res = await authFetch("/api/medical-conditions");
-  if (!res.ok) throw new Error("Failed to fetch medical conditions");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch medical conditions (${res.status})`);
+  }
   return res.json();
 }
 
@@ -287,7 +302,10 @@ export async function createMedicalCondition(data: Omit<MedicalCondition, "id" |
     method: "POST",
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to create medical condition");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to create medical condition (${res.status})`);
+  }
   return res.json();
 }
 
@@ -296,26 +314,38 @@ export async function updateMedicalCondition(id: string, updates: Partial<Medica
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error("Failed to update medical condition");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to update medical condition (${res.status})`);
+  }
   return res.json();
 }
 
 export async function deleteMedicalCondition(id: string) {
   const res = await authFetch(`/api/medical-conditions/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete medical condition");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to delete medical condition (${res.status})`);
+  }
   return res.json();
 }
 
 // Claims API
 export async function getClaims(): Promise<Claim[]> {
   const res = await authFetch("/api/claims");
-  if (!res.ok) throw new Error("Failed to fetch claims");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch claims (${res.status})`);
+  }
   return res.json();
 }
 
 export async function getClaim(id: string): Promise<Claim> {
   const res = await authFetch(`/api/claims/${id}`);
-  if (!res.ok) throw new Error("Failed to fetch claim");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch claim (${res.status})`);
+  }
   return res.json();
 }
 
@@ -324,7 +354,10 @@ export async function createClaim(data: Omit<Claim, "id" | "userId" | "createdAt
     method: "POST",
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to create claim");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to create claim (${res.status})`);
+  }
   return res.json();
 }
 
@@ -333,13 +366,19 @@ export async function updateClaim(id: string, updates: Partial<Claim>) {
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error("Failed to update claim");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to update claim (${res.status})`);
+  }
   return res.json();
 }
 
 export async function deleteClaim(id: string) {
   const res = await authFetch(`/api/claims/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete claim");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to delete claim (${res.status})`);
+  }
   return res.json();
 }
 
@@ -347,7 +386,10 @@ export async function deleteClaim(id: string) {
 export async function getLayStatements(claimId?: string): Promise<LayStatement[]> {
   const url = claimId ? `/api/lay-statements?claimId=${claimId}` : "/api/lay-statements";
   const res = await authFetch(url);
-  if (!res.ok) throw new Error("Failed to fetch lay statements");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch lay statements (${res.status})`);
+  }
   return res.json();
 }
 
@@ -356,7 +398,10 @@ export async function createLayStatement(data: Omit<LayStatement, "id" | "userId
     method: "POST",
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to create lay statement");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to create lay statement (${res.status})`);
+  }
   return res.json();
 }
 
@@ -365,13 +410,19 @@ export async function updateLayStatement(id: string, updates: Partial<LayStateme
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error("Failed to update lay statement");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to update lay statement (${res.status})`);
+  }
   return res.json();
 }
 
 export async function deleteLayStatement(id: string) {
   const res = await authFetch(`/api/lay-statements/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete lay statement");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to delete lay statement (${res.status})`);
+  }
   return res.json();
 }
 
@@ -379,7 +430,10 @@ export async function deleteLayStatement(id: string) {
 export async function getBuddyStatements(claimId?: string): Promise<BuddyStatement[]> {
   const url = claimId ? `/api/buddy-statements?claimId=${claimId}` : "/api/buddy-statements";
   const res = await authFetch(url);
-  if (!res.ok) throw new Error("Failed to fetch buddy statements");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch buddy statements (${res.status})`);
+  }
   return res.json();
 }
 
@@ -388,7 +442,10 @@ export async function createBuddyStatement(data: Omit<BuddyStatement, "id" | "us
     method: "POST",
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to create buddy statement");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to create buddy statement (${res.status})`);
+  }
   return res.json();
 }
 
@@ -397,13 +454,19 @@ export async function updateBuddyStatement(id: string, updates: Partial<BuddySta
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error("Failed to update buddy statement");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to update buddy statement (${res.status})`);
+  }
   return res.json();
 }
 
 export async function deleteBuddyStatement(id: string) {
   const res = await authFetch(`/api/buddy-statements/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete buddy statement");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to delete buddy statement (${res.status})`);
+  }
   return res.json();
 }
 
@@ -411,26 +474,38 @@ export async function deleteBuddyStatement(id: string) {
 export async function getDocuments(claimId?: string): Promise<Document[]> {
   const url = claimId ? `/api/documents?claimId=${claimId}` : "/api/documents";
   const res = await authFetch(url);
-  if (!res.ok) throw new Error("Failed to fetch documents");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch documents (${res.status})`);
+  }
   return res.json();
 }
 
 export async function deleteDocument(id: string) {
   const res = await authFetch(`/api/documents/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete document");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to delete document (${res.status})`);
+  }
   return res.json();
 }
 
 // Appeals API
 export async function getAppeals(): Promise<Appeal[]> {
   const res = await authFetch("/api/appeals");
-  if (!res.ok) throw new Error("Failed to fetch appeals");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch appeals (${res.status})`);
+  }
   return res.json();
 }
 
 export async function getAppeal(id: string): Promise<Appeal> {
   const res = await authFetch(`/api/appeals/${id}`);
-  if (!res.ok) throw new Error("Failed to fetch appeal");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to fetch appeal (${res.status})`);
+  }
   return res.json();
 }
 
@@ -439,7 +514,10 @@ export async function createAppeal(data: Omit<Appeal, "id" | "userId" | "created
     method: "POST",
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to create appeal");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to create appeal (${res.status})`);
+  }
   return res.json();
 }
 
@@ -448,12 +526,18 @@ export async function updateAppeal(id: string, updates: Partial<Appeal>) {
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  if (!res.ok) throw new Error("Failed to update appeal");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to update appeal (${res.status})`);
+  }
   return res.json();
 }
 
 export async function deleteAppeal(id: string) {
   const res = await authFetch(`/api/appeals/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete appeal");
+  if (!res.ok) {
+    const errData = await safeJsonParse(res);
+    throw new Error(errData?.message || `Failed to delete appeal (${res.status})`);
+  }
   return res.json();
 }

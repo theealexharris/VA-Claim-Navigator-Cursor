@@ -471,11 +471,12 @@ export default function ServiceHistory() {
         description: "Your service history has been saved to your account. Proceeding to Medical Conditions.",
       });
       setLocation("/dashboard/medical-history");
-    } catch (error) {
-      console.error("Failed to save service history:", error);
+    } catch (error: any) {
+      const errMsg = error?.message || "Unknown error";
+      console.error("Failed to save service history:", errMsg, error);
       toast({
         title: "Error",
-        description: "Failed to save. Please try again.",
+        description: errMsg,
         variant: "destructive",
       });
     } finally {
