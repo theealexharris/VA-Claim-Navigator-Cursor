@@ -41,14 +41,17 @@ export async function registerRoutes(
    * we create a minimal placeholder row so FK inserts don't fail.
    * THROWS on critical failures (non-duplicate) so the caller can return a clear error.
    */
-  async function ensureUserRow(userId: string, email: string, accessToken: string): Promise<void> {
-    try {
-      const existing = await storage.getUser(userId, accessToken);
-      if (existing) return; // Row already exists
+  // Returns the user row (snake_case from DB) — either existing or newly created.
+  // Callers that don't need the row can ignore the return value.
+  async function ensureUserRow(userId: string, email: string, accessToken: string): Promise<any> {
+    // Step 1: Try to fetch existing row
+    const existing = await storage.getUser(userId, accessToken);
+    if (existing) return existing;
 
-      console.log("[ENSURE-USER-ROW] No user row found, creating for:", userId, email);
-      // Include explicit defaults for all NOT NULL columns to be safe
-      await storage.createUser({
+    // Step 2: Row not found (or SELECT silently failed due to RLS) — attempt INSERT
+    console.log("[ENSURE-USER-ROW] No user row found, creating for:", userId, email);
+    try {
+      const created = await storage.createUser({
         id: userId,
         email,
         password: "",
@@ -57,15 +60,24 @@ export async function registerRoutes(
         two_factor_enabled: false,
         profile_completed: false,
       }, accessToken);
-      console.log("[ENSURE-USER-ROW] Created missing user row for:", userId);
+      console.log("[ENSURE-USER-ROW] Created user row for:", userId);
+      // Return the INSERT result directly — avoids a second getUser that may fail under RLS
+      if (created) return created;
+      // INSERT succeeded but returned no data (RLS on RETURNING) — return synthetic minimal row
+      console.warn("[ENSURE-USER-ROW] INSERT returned no data for:", userId, "— using synthetic row");
+      return { id: userId, email, stripe_customer_id: null, stripe_subscription_id: null, subscription_tier: "starter", role: "user" };
     } catch (err: any) {
       const msg = err?.message || "";
-      // Duplicate key = another request created it between our check and insert — that's fine
       if (/duplicate|unique|23505/i.test(msg)) {
-        console.log("[ENSURE-USER-ROW] Row already exists (race condition), continuing:", userId);
-        return;
+        // Row was created between our SELECT and INSERT — try one more fetch
+        console.log("[ENSURE-USER-ROW] Race condition (duplicate key), re-fetching:", userId);
+        const refetch = await storage.getUser(userId, accessToken);
+        if (refetch) return refetch;
+        // Still unreadable (RLS?) — return synthetic minimal row so callers can proceed
+        console.warn("[ENSURE-USER-ROW] Row exists but unreadable, using synthetic:", userId);
+        return { id: userId, email, stripe_customer_id: null, stripe_subscription_id: null, subscription_tier: "starter", role: "user" };
       }
-      // Any other error is critical — throw so the caller returns a clear error
+      // Any other error is critical
       console.error("[ENSURE-USER-ROW] CRITICAL: Could not create user row:", msg);
       throw new Error(`Cannot initialize user record: ${msg}`);
     }
@@ -1589,17 +1601,15 @@ export async function registerRoutes(
 
       const { stripeService } = await import("./stripeService");
 
-      // Ensure users row exists before looking up stripeCustomerId
-      await ensureUserRow(user.id, user.email, session.accessToken);
-
-      // Get user from database to check stripeCustomerId
-      const dbUser = await storage.getUser(user.id, session.accessToken);
+      // Ensure users row exists AND get it back directly (avoids a second getUser that may fail under RLS)
+      const dbUser = await ensureUserRow(user.id, user.email, session.accessToken);
       if (!dbUser) {
         return res.status(404).json({ message: "User not found. Please save your profile first, then try again." });
       }
 
       // Create or get customer (verify existing customer still exists in Stripe)
-      let customerId = dbUser.stripeCustomerId;
+      // dbUser is raw snake_case from DB — use stripe_customer_id not stripeCustomerId
+      let customerId = dbUser.stripe_customer_id ?? dbUser.stripeCustomerId ?? null;
       let needsNewCustomer = !customerId;
       
       if (customerId) {
