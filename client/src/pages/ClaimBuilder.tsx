@@ -774,9 +774,16 @@ export default function ClaimBuilder() {
   };
 
   const getUserProfile = () => {
+    // SSN is session-only (HIPAA) — stored in sessionStorage, stripped from localStorage
+    const sessionSSN = (typeof window !== "undefined" ? sessionStorage.getItem("sessionSSN") : null) ?? "";
     const saved = localStorage.getItem("userProfile");
-    if (saved) return JSON.parse(saved);
-    return { firstName: "", lastName: "", ssn: "", phone: "", email: "" };
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return { ...parsed, ssn: sessionSSN };
+      } catch (_) {}
+    }
+    return { firstName: "", lastName: "", ssn: sessionSSN, phone: "", email: "" };
   };
 
   const getServiceHistory = () => {

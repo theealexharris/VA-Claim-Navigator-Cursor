@@ -50,6 +50,12 @@ const aiLimiter = rateLimit({
 /** Return a safe error message for 500s — never leak internal details in production */
 function safeErrorMessage(error: any, fallback = "An unexpected error occurred"): string {
   if (process.env.NODE_ENV !== "production") return error?.message || fallback;
+  // In production, Stripe errors are safe to surface (they describe config/usage problems,
+  // not internal state). Expose them so operators/users can diagnose payment issues.
+  const msg: string = error?.message || "";
+  if (msg && (error?.type?.startsWith("Stripe") || /stripe|no such price|no such customer|invalid api key|payment/i.test(msg))) {
+    return msg;
+  }
   return fallback;
 }
 
@@ -1631,17 +1637,20 @@ export async function registerRoutes(
 
       const { stripeService } = await import("./stripeService");
 
-      // Ensure users row exists AND get it back directly (avoids a second getUser that may fail under RLS)
+      // Ensure users row exists. Use the RETURNED row's id — it may differ from
+      // user.id if a stale row exists (same email, different primary key).
       const dbUser = await ensureUserRow(user.id, user.email, session.accessToken);
       if (!dbUser) {
         return res.status(404).json({ message: "User not found. Please save your profile first, then try again." });
       }
+      // effectiveUserId = the real DB row id; needed for UPDATE so the row is actually found
+      const effectiveUserId = dbUser.id ?? user.id;
 
       // Create or get customer (verify existing customer still exists in Stripe)
       // dbUser is raw snake_case from DB — use stripe_customer_id not stripeCustomerId
       let customerId = dbUser.stripe_customer_id ?? dbUser.stripeCustomerId ?? null;
       let needsNewCustomer = !customerId;
-      
+
       if (customerId) {
         // Verify customer still exists in Stripe
         const exists = await stripeService.customerExists(customerId);
@@ -1649,10 +1658,11 @@ export async function registerRoutes(
           needsNewCustomer = true;
         }
       }
-      
+
       if (needsNewCustomer) {
-        const customer = await stripeService.createCustomer(user.email, user.id);
-        await storage.updateUser(user.id, { stripeCustomerId: customer.id }, session.accessToken);
+        const customer = await stripeService.createCustomer(user.email, effectiveUserId);
+        // Update the real DB row (by the row's actual id, using service-level client)
+        await storage.updateUser(effectiveUserId, { stripeCustomerId: customer.id });
         customerId = customer.id;
       }
 
