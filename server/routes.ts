@@ -34,6 +34,27 @@ export async function registerRoutes(
   // Create Insforge storage service instance
   const storage = new InsforgeStorageService();
 
+  /**
+   * Ensure a users row exists for this session user.
+   * All other tables (service_history, medical_conditions, claims, etc.) have FK → users.id.
+   * If the row doesn't exist yet (e.g. user registered before the createUser flow was added),
+   * we silently create a minimal placeholder row so FK inserts don't fail.
+   */
+  async function ensureUserRow(userId: string, email: string, accessToken: string): Promise<void> {
+    try {
+      const existing = await storage.getUser(userId, accessToken);
+      if (!existing) {
+        await storage.createUser({ id: userId, email, password: "" }, accessToken);
+        console.log("[ENSURE-USER-ROW] Created missing user row for:", userId);
+      }
+    } catch (err: any) {
+      if (!/duplicate|unique|23505/i.test(err?.message || "")) {
+        console.warn("[ENSURE-USER-ROW] Could not create user row:", err?.message);
+      }
+      // Ignore duplicate errors (row was created between check and insert)
+    }
+  }
+
   // Map DB user (snake_case) to API/frontend shape (camelCase)
   function dbUserToApiUser(dbUser: any): any {
     if (!dbUser) return dbUser;
@@ -486,17 +507,37 @@ export async function registerRoutes(
         return res.json(current);
       }
 
-      const updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
+      let updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
 
-      // If no DB row exists yet (update matched 0 rows), return a synthesized success response
-      // so the client can save to localStorage without hitting a DB constraint error.
-      // The user row will be created on next login via the login handler.
+      // If UPDATE matched no rows, the users row doesn't exist yet.
+      // Try to INSERT it now (required so service_history FK and other FKs don't fail).
       if (!updatedUser) {
-        const synthetic = dbUserToApiUser({
-          id: user.id,
-          email: user.email,
-          ...dbUpdates,
-        });
+        try {
+          updatedUser = await storage.createUser({
+            id: user.id,
+            email: user.email,
+            password: "", // Placeholder — real auth is handled by Insforge SDK
+            ...dbUpdates,
+          }, session.accessToken);
+          console.log("[PROFILE PATCH] Created missing user row for:", user.id);
+        } catch (createErr: any) {
+          const errMsg = String(createErr?.message || "");
+          if (/duplicate|unique|23505/i.test(errMsg)) {
+            // Row was created between our update check and insert (race condition) — re-fetch it
+            updatedUser = await storage.getUser(user.id, session.accessToken);
+          } else {
+            // INSERT failed for another reason — log and return synthetic success so the
+            // client doesn't get stuck. The user can still navigate; we'll retry on next save.
+            console.warn("[PROFILE PATCH] Could not create user row:", errMsg);
+          }
+        }
+      }
+
+      // If we still have no row (creation failed), return a synthesized success so the client
+      // can save to localStorage without blocking. All FK-dependent tables (service_history, etc.)
+      // will fail until the row is created, but at least the profile page won't crash.
+      if (!updatedUser) {
+        const synthetic = dbUserToApiUser({ id: user.id, email: user.email, ...dbUpdates });
         return res.json(synthetic);
       }
       
@@ -539,6 +580,9 @@ export async function registerRoutes(
   app.post("/api/service-history", requireInsforgeAuth(), async (req, res) => {
     try {
       const session = (req as any).insforgeSession;
+      // Ensure users row exists (service_history has FK → users.id)
+      await ensureUserRow(session.user.id, session.user.email, session.accessToken);
+
       const body = {
         ...req.body,
         userId: session.user.id,
@@ -627,6 +671,8 @@ export async function registerRoutes(
   app.post("/api/medical-conditions", requireInsforgeAuth(), async (req, res) => {
     try {
       const session = (req as any).insforgeSession;
+      // Ensure users row exists (medical_conditions has FK → users.id)
+      await ensureUserRow(session.user.id, session.user.email, session.accessToken);
       const body = {
         ...req.body,
         userId: session.user.id,
@@ -713,6 +759,8 @@ export async function registerRoutes(
   app.post("/api/claims", requireInsforgeAuth(), async (req, res) => {
     try {
       const session = (req as any).insforgeSession;
+      // Ensure users row exists (claims has FK → users.id)
+      await ensureUserRow(session.user.id, session.user.email, session.accessToken);
       const data = insertClaimSchema.parse({ ...req.body, userId: session.user.id });
       const claim = await storage.createClaim(data, session.accessToken);
       res.json(claim);
