@@ -1589,10 +1589,13 @@ export async function registerRoutes(
 
       const { stripeService } = await import("./stripeService");
 
+      // Ensure users row exists before looking up stripeCustomerId
+      await ensureUserRow(user.id, user.email, session.accessToken);
+
       // Get user from database to check stripeCustomerId
       const dbUser = await storage.getUser(user.id, session.accessToken);
       if (!dbUser) {
-        return res.status(404).json({ message: "User not found" });
+        return res.status(404).json({ message: "User not found. Please save your profile first, then try again." });
       }
 
       // Create or get customer (verify existing customer still exists in Stripe)
