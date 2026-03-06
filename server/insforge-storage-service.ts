@@ -43,7 +43,7 @@ export class InsforgeStorageService implements IStorage {
       .from('users')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -54,7 +54,7 @@ export class InsforgeStorageService implements IStorage {
       .from('users')
       .select()
       .eq('email', email)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -83,10 +83,20 @@ export class InsforgeStorageService implements IStorage {
       .update(updates)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw new Error(error.message || "Failed to update user profile.");
-    return data || undefined;
+    // If update matched no rows the user row doesn't exist yet — create it via upsert.
+    if (!data) {
+      const { data: inserted, error: insertErr } = await this.getClient(accessToken).database
+        .from('users')
+        .upsert([{ id, ...updates }])
+        .select()
+        .maybeSingle();
+      if (insertErr) throw new Error(insertErr.message || "Failed to create user profile.");
+      return inserted || undefined;
+    }
+    return data;
   }
 
   // Service History methods
@@ -106,7 +116,7 @@ export class InsforgeStorageService implements IStorage {
       .from('service_history')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -129,7 +139,7 @@ export class InsforgeStorageService implements IStorage {
       .update(history)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -161,7 +171,7 @@ export class InsforgeStorageService implements IStorage {
       .from('medical_conditions')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -184,7 +194,7 @@ export class InsforgeStorageService implements IStorage {
       .update(condition)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -216,7 +226,7 @@ export class InsforgeStorageService implements IStorage {
       .from('claims')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -239,7 +249,7 @@ export class InsforgeStorageService implements IStorage {
       .update({ ...claim, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -271,7 +281,7 @@ export class InsforgeStorageService implements IStorage {
       .from('lay_statements')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -305,7 +315,7 @@ export class InsforgeStorageService implements IStorage {
       .update({ ...statement, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -337,7 +347,7 @@ export class InsforgeStorageService implements IStorage {
       .from('buddy_statements')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -371,7 +381,7 @@ export class InsforgeStorageService implements IStorage {
       .update(statement)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -403,7 +413,7 @@ export class InsforgeStorageService implements IStorage {
       .from('documents')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -457,7 +467,7 @@ export class InsforgeStorageService implements IStorage {
       .from('appeals')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -480,7 +490,7 @@ export class InsforgeStorageService implements IStorage {
       .update({ ...appeal, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -512,7 +522,7 @@ export class InsforgeStorageService implements IStorage {
       .from('referrals')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -523,7 +533,7 @@ export class InsforgeStorageService implements IStorage {
       .from('referrals')
       .select()
       .eq('referral_code', code)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -546,7 +556,7 @@ export class InsforgeStorageService implements IStorage {
       .update(referral)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -591,7 +601,7 @@ export class InsforgeStorageService implements IStorage {
       .from('consultations')
       .select()
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -614,7 +624,7 @@ export class InsforgeStorageService implements IStorage {
       .update(consultation)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return undefined;
     return data || undefined;
@@ -630,7 +640,7 @@ async getStat(key: string, accessToken?: string): Promise<number | null> {
     .from("site_stats")
     .select("value")
     .eq("key", key)
-    .single();
+    .maybeSingle();
 
   // Missing row OR any error -> treat as "doesn't exist"
   if (error || !data) return null;
@@ -649,7 +659,7 @@ const newValue = currentValue + 1;
       .update({ value: newValue, updated_at: new Date().toISOString() })
       .eq('key', key)
       .select()
-      .single();
+      .maybeSingle();
 
     if (updateError || !updateData) {
       // If update failed, try insert
@@ -707,7 +717,7 @@ const newValue = currentValue + 1;
       .from('stripe.products')
       .select()
       .eq('id', productId)
-      .single();
+      .maybeSingle();
 
     if (error || !data) return undefined;
     return data;
@@ -718,7 +728,7 @@ const newValue = currentValue + 1;
       .from('stripe.subscriptions')
       .select()
       .eq('id', subscriptionId)
-      .single();
+      .maybeSingle();
 
     if (error) return null;
     return data || null;

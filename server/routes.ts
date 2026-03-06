@@ -471,6 +471,10 @@ export async function registerRoutes(
       }
       
       const dbUpdates = apiUpdatesToDbUpdates(updates);
+      // Include email so upsert can create a complete row if the user doesn't exist yet
+      if (user.email && !dbUpdates.email) {
+        dbUpdates.email = user.email;
+      }
       const updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
       if (!updatedUser) {
         return res.status(404).json({ message: "User not found" });
