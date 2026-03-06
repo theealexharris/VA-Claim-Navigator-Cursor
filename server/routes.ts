@@ -70,11 +70,13 @@ export async function registerRoutes(
   // Returns the user row (snake_case from DB) — either existing or newly created.
   // Callers that don't need the row can ignore the return value.
   async function ensureUserRow(userId: string, email: string, accessToken: string): Promise<any> {
-    // Step 1: Try to fetch existing row
+    // Step 1: Try to fetch existing row using user's token (respects RLS read policy)
     const existing = await storage.getUser(userId, accessToken);
     if (existing) return existing;
 
-    // Step 2: Row not found (or SELECT silently failed due to RLS) — attempt INSERT
+    // Step 2: Row not found — INSERT using service-level client (no accessToken).
+    // User-scoped tokens are blocked by RLS from inserting into the users table;
+    // the anon/service client has the required INSERT permission.
     console.log("[ENSURE-USER-ROW] No user row found, creating for:", userId);
     try {
       const created = await storage.createUser({
@@ -85,25 +87,24 @@ export async function registerRoutes(
         role: "user",
         two_factor_enabled: false,
         profile_completed: false,
-      }, accessToken);
+      }); // No accessToken → uses service-level insforge client, bypasses RLS INSERT restriction
       console.log("[ENSURE-USER-ROW] Created user row for:", userId);
-      // Return the INSERT result directly — avoids a second getUser that may fail under RLS
       if (created) return created;
-      // INSERT succeeded but returned no data (RLS on RETURNING) — return synthetic minimal row
+      // INSERT succeeded but RETURNING was blocked (RLS on SELECT) — row IS in DB, use synthetic
       console.warn("[ENSURE-USER-ROW] INSERT returned no data for:", userId, "— using synthetic row");
       return { id: userId, email, stripe_customer_id: null, stripe_subscription_id: null, subscription_tier: "starter", role: "user" };
     } catch (err: any) {
       const msg = err?.message || "";
       if (/duplicate|unique|23505/i.test(msg)) {
-        // Row was created between our SELECT and INSERT — try one more fetch
+        // Row already exists (race condition or prior insert) — fetch it
         console.log("[ENSURE-USER-ROW] Race condition (duplicate key), re-fetching:", userId);
         const refetch = await storage.getUser(userId, accessToken);
         if (refetch) return refetch;
-        // Still unreadable (RLS?) — return synthetic minimal row so callers can proceed
+        // Row exists but unreadable (RLS SELECT restriction) — row IS in DB, synthetic is safe
         console.warn("[ENSURE-USER-ROW] Row exists but unreadable, using synthetic:", userId);
         return { id: userId, email, stripe_customer_id: null, stripe_subscription_id: null, subscription_tier: "starter", role: "user" };
       }
-      // Any other error is critical
+      // Any other error is critical — surface it so the caller returns a clear 500
       console.error("[ENSURE-USER-ROW] CRITICAL: Could not create user row:", msg);
       throw new Error(`Cannot initialize user record: ${msg}`);
     }
@@ -244,7 +245,7 @@ export async function registerRoutes(
             two_factor_enabled: false,
             profile_completed: false,
           };
-          dbUser = await storage.createUser(userRow, result.accessToken);
+          dbUser = await storage.createUser(userRow); // Service-level client — user token blocked by RLS
           console.log(`[REGISTER] User saved to navigator: ${authUser.id}`);
         } catch (createErr: any) {
           // User row may already exist (e.g. from a previous flow)
@@ -345,7 +346,7 @@ export async function registerRoutes(
               two_factor_enabled: false,
               profile_completed: false,
             };
-            dbUser = await storage.createUser(userRow, result.accessToken);
+            dbUser = await storage.createUser(userRow); // Service-level client — user token blocked by RLS
             console.log(`[LOGIN] User saved to navigator: ${authUser.id}`);
           } catch (createErr: any) {
             if (createErr?.message?.includes("duplicate") || createErr?.message?.includes("unique") || createErr?.code === "23505") {
@@ -437,7 +438,7 @@ export async function registerRoutes(
               role: "user",
               two_factor_enabled: false,
               profile_completed: false,
-            }, data.accessToken);
+            }); // Service-level client — user token blocked by RLS
           }
         } catch (dbErr: any) {
           console.warn("[VERIFY] DB save failed (verification still succeeded):", dbErr?.message);
@@ -588,7 +589,7 @@ export async function registerRoutes(
             two_factor_enabled: false,
             profile_completed: false,
             ...dbUpdates,
-          }, session.accessToken);
+          }); // Service-level client — user token blocked by RLS
           console.log("[PROFILE PATCH] Created missing user row for:", user.id);
         } catch (createErr: any) {
           const errMsg = String(createErr?.message || "");
