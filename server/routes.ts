@@ -471,11 +471,38 @@ export async function registerRoutes(
       }
       
       const dbUpdates = apiUpdatesToDbUpdates(updates);
-      // Include email so upsert can create a complete row if the user doesn't exist yet
+
+      // SSN is session-only (HIPAA) — never persist to the database
+      delete dbUpdates.ssn;
+
+      // Include email so a new row can be created if user doesn't exist yet
       if (user.email && !dbUpdates.email) {
         dbUpdates.email = user.email;
       }
-      const updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
+
+      // If there are no fields left to save after stripping SSN, return current profile
+      if (Object.keys(dbUpdates).filter(k => k !== 'email').length === 0) {
+        const current = dbUser ? dbUserToApiUser(dbUser) : { id: user.id, email: user.email };
+        return res.json(current);
+      }
+
+      let updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
+
+      // If update matched no rows (user row doesn't exist yet), create it
+      if (!updatedUser) {
+        try {
+          updatedUser = await storage.createUser({
+            id: user.id,
+            email: user.email,
+            password: `insforge-managed-${Date.now()}`, // Placeholder; real auth handled by Insforge SDK
+            ...dbUpdates,
+          }, session.accessToken);
+        } catch (createErr: any) {
+          console.error("[PROFILE PATCH] Failed to create user row:", createErr?.message);
+          return res.status(500).json({ message: "Failed to save profile. Please try again." });
+        }
+      }
+
       if (!updatedUser) {
         return res.status(404).json({ message: "User not found" });
       }

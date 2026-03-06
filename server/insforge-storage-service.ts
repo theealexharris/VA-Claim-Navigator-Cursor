@@ -86,17 +86,7 @@ export class InsforgeStorageService implements IStorage {
       .maybeSingle();
 
     if (error) throw new Error(error.message || "Failed to update user profile.");
-    // If update matched no rows the user row doesn't exist yet — create it via upsert.
-    if (!data) {
-      const { data: inserted, error: insertErr } = await this.getClient(accessToken).database
-        .from('users')
-        .upsert([{ id, ...updates }])
-        .select()
-        .maybeSingle();
-      if (insertErr) throw new Error(insertErr.message || "Failed to create user profile.");
-      return inserted || undefined;
-    }
-    return data;
+    return data || undefined;
   }
 
   // Service History methods

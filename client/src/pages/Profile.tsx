@@ -59,10 +59,15 @@ export default function Profile() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      // Load SSN from sessionStorage (session-only, HIPAA)
+      const sessionSSN = sessionStorage.getItem("sessionSSN") ?? "";
+
       const savedProfile = localStorage.getItem("userProfile");
       if (savedProfile) {
         try {
-          setFormData(JSON.parse(savedProfile));
+          const parsed = JSON.parse(savedProfile);
+          parsed.ssn = sessionSSN; // Always use session SSN, not stored value
+          setFormData(parsed);
         } catch (_) {}
       }
       // Sync from navigator (server) so dashboard profile is up to date
@@ -78,11 +83,13 @@ export default function Profile() {
           city: profile.city ?? "",
           state: profile.state ?? "",
           zipCode: profile.zipCode ?? "",
-          ssn: (profile as any).ssn ?? "",
+          ssn: sessionSSN, // SSN comes from sessionStorage only, never from DB
           vaFileNumber: (profile as any).vaFileNumber ?? "",
         };
         setFormData(fromApi);
-        localStorage.setItem("userProfile", JSON.stringify(fromApi));
+        // Save profile to localStorage but strip SSN (HIPAA)
+        const profileForStorage = { ...fromApi, ssn: "" };
+        localStorage.setItem("userProfile", JSON.stringify(profileForStorage));
       } catch (_) {}
     };
     load();
@@ -119,20 +126,16 @@ export default function Profile() {
     }
     if (field === "ssn") {
       value = formatSSN(value);
+      // Persist SSN to sessionStorage in real-time (session-only, HIPAA)
+      sessionStorage.setItem("sessionSSN", value);
     }
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleSSNBlur = async () => {
+  const handleSSNBlur = () => {
+    // SSN is session-only (HIPAA) — save to sessionStorage, never to the database
     const ssnToSave = formData.ssn?.trim() ?? "";
-    try {
-      await updateProfile({ ssn: ssnToSave });
-      const merged = { ...JSON.parse(localStorage.getItem("userProfile") || "{}"), ssn: ssnToSave };
-      localStorage.setItem("userProfile", JSON.stringify(merged));
-      if (ssnToSave) toast({ title: "SSN saved", description: "Your SSN has been saved automatically." });
-    } catch (_) {
-      toast({ title: "Could not save SSN", description: "Please try again or save the full profile.", variant: "destructive" });
-    }
+    sessionStorage.setItem("sessionSSN", ssnToSave);
   };
 
   const pendingDeluxePayment = typeof window !== "undefined" ? localStorage.getItem("pendingDeluxePayment") === "true" : false;
@@ -180,6 +183,7 @@ export default function Profile() {
 
       await new Promise(resolve => setTimeout(resolve, 300));
       // Save to navigator (server) so profile is stored and dashboard stays in sync
+      // SSN is session-only (HIPAA) — never sent to the server
       await updateProfile({
         firstName: formData.firstName,
         lastName: formData.lastName,
@@ -188,10 +192,11 @@ export default function Profile() {
         city: formData.city,
         state: formData.state,
         zipCode: formData.zipCode,
-        ssn: formData.ssn || undefined,
         vaFileNumber: formData.vaFileNumber || undefined,
       });
-      localStorage.setItem("userProfile", JSON.stringify(formData));
+      // Save profile to localStorage but strip SSN (HIPAA)
+      const profileForStorage = { ...formData, ssn: "" };
+      localStorage.setItem("userProfile", JSON.stringify(profileForStorage));
       // Mark personal information as complete for workflow progression
       localStorage.setItem("personalInfoComplete", "true");
       // Dispatch event to update sidebar

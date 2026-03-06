@@ -99,6 +99,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Clear ALL user data including sensitive SSN and evidence (HIPAA)
     ALL_USER_KEYS.forEach(key => localStorage.removeItem(key));
     clearSSNFromStorage();
+    // Clear session-only SSN from sessionStorage (HIPAA)
+    try { sessionStorage.removeItem("sessionSSN"); } catch (_) {}
 
     window.dispatchEvent(new CustomEvent("sessionExpired"));
   }
@@ -121,6 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleBeforeUnload = () => {
       clearSSNFromStorage();
       SENSITIVE_KEYS.forEach(key => localStorage.removeItem(key));
+      // sessionStorage auto-clears on tab/browser close, but clear explicitly for safety
+      try { sessionStorage.removeItem("sessionSSN"); } catch (_) {}
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
@@ -191,19 +195,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function logout() {
     clearSessionTimer();
 
-    // Clear SSN from server database (HIPAA)
-    try {
-      await authFetch("/api/users/profile", {
-        method: "PATCH",
-        body: JSON.stringify({ ssn: "" }),
-      });
-    } catch (_) { /* best-effort */ }
-
     await apiLogout();
     setUser(null);
 
     // Clear all user-specific data on logout to prevent data leakage (HIPAA)
     ALL_USER_KEYS.forEach(key => localStorage.removeItem(key));
+    // Clear session-only SSN from sessionStorage (HIPAA)
+    try { sessionStorage.removeItem("sessionSSN"); } catch (_) {}
   }
 
   return (
