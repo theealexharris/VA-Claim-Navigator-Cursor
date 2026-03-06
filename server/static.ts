@@ -23,6 +23,8 @@ export function serveStatic(app: any) {
 
   app.get("*", (req: any, res: any, next: any) => {
     if (req.path?.startsWith("/api")) return next();
+    // Never cache index.html so browsers always load the latest JS/CSS bundles after deploys
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
     res.sendFile(indexHtml);
   });
 }

@@ -486,25 +486,18 @@ export async function registerRoutes(
         return res.json(current);
       }
 
-      let updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
+      const updatedUser = await storage.updateUser(user.id, dbUpdates, session.accessToken);
 
-      // If update matched no rows (user row doesn't exist yet), create it
+      // If no DB row exists yet (update matched 0 rows), return a synthesized success response
+      // so the client can save to localStorage without hitting a DB constraint error.
+      // The user row will be created on next login via the login handler.
       if (!updatedUser) {
-        try {
-          updatedUser = await storage.createUser({
-            id: user.id,
-            email: user.email,
-            password: `insforge-managed-${Date.now()}`, // Placeholder; real auth handled by Insforge SDK
-            ...dbUpdates,
-          }, session.accessToken);
-        } catch (createErr: any) {
-          console.error("[PROFILE PATCH] Failed to create user row:", createErr?.message);
-          return res.status(500).json({ message: "Failed to save profile. Please try again." });
-        }
-      }
-
-      if (!updatedUser) {
-        return res.status(404).json({ message: "User not found" });
+        const synthetic = dbUserToApiUser({
+          id: user.id,
+          email: user.email,
+          ...dbUpdates,
+        });
+        return res.json(synthetic);
       }
       
       // Increment vets served counter on first profile save
