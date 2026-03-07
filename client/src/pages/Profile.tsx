@@ -59,21 +59,34 @@ export default function Profile() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      // Load SSN from sessionStorage (session-only, HIPAA)
+      // Seed form from localStorage immediately (fast path before API responds)
       const sessionSSN = sessionStorage.getItem("sessionSSN") ?? "";
-
       const savedProfile = localStorage.getItem("userProfile");
       if (savedProfile) {
         try {
           const parsed = JSON.parse(savedProfile);
-          parsed.ssn = sessionSSN; // Always use session SSN, not stored value
+          parsed.ssn = sessionSSN;
           setFormData(parsed);
         } catch (_) {}
       }
-      // Sync from navigator (server) so dashboard profile is up to date
+
+      // Sync from server — SSN is now persisted to DB (digits-only) and returned by the API
       try {
         const profile = await getProfile();
         if (cancelled || !profile) return;
+
+        // If the DB has an SSN and sessionStorage is empty (new session/tab), hydrate both
+        const apiSsnRaw: string = (profile as any).ssn ?? "";
+        const formattedApiSsn = apiSsnRaw
+          ? `${apiSsnRaw.slice(0, 3)}-${apiSsnRaw.slice(3, 5)}-${apiSsnRaw.slice(5, 9)}`
+          : "";
+        // Use DB SSN if sessionStorage is empty; sessionStorage wins if already set (user may have updated it this session)
+        const effectiveSSN = sessionSSN || formattedApiSsn;
+        if (formattedApiSsn && !sessionSSN) {
+          // Populate sessionStorage from DB so all pages can access it this session
+          sessionStorage.setItem("sessionSSN", formattedApiSsn);
+        }
+
         const fromApi: ProfileData = {
           firstName: profile.firstName ?? "",
           lastName: profile.lastName ?? "",
@@ -83,11 +96,11 @@ export default function Profile() {
           city: profile.city ?? "",
           state: profile.state ?? "",
           zipCode: profile.zipCode ?? "",
-          ssn: sessionSSN, // SSN comes from sessionStorage only, never from DB
+          ssn: effectiveSSN,
           vaFileNumber: (profile as any).vaFileNumber ?? "",
         };
         setFormData(fromApi);
-        // Save profile to localStorage but strip SSN (HIPAA)
+        // localStorage stores profile WITHOUT SSN (never write SSN to localStorage)
         const profileForStorage = { ...fromApi, ssn: "" };
         localStorage.setItem("userProfile", JSON.stringify(profileForStorage));
       } catch (_) {}
@@ -182,8 +195,10 @@ export default function Profile() {
       }
 
       await new Promise(resolve => setTimeout(resolve, 300));
-      // Save to navigator (server) so profile is stored and dashboard stays in sync
-      // SSN is session-only (HIPAA) — never sent to the server
+      // Save to navigator (server) — SSN is now persisted to DB (digits-only) so it
+      // survives new sessions and cross-tab navigation. The server strips formatting
+      // and only returns SSN to the authenticated owner.
+      const ssnDigits = formData.ssn ? formData.ssn.replace(/\D/g, "") : undefined;
       await updateProfile({
         firstName: formData.firstName,
         lastName: formData.lastName,
@@ -193,6 +208,7 @@ export default function Profile() {
         state: formData.state,
         zipCode: formData.zipCode,
         vaFileNumber: formData.vaFileNumber || undefined,
+        ...(ssnDigits ? { ssn: ssnDigits } : {}),
       });
       // Save profile to localStorage but strip SSN (HIPAA)
       const profileForStorage = { ...formData, ssn: "" };

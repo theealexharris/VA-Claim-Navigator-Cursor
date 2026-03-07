@@ -153,6 +153,30 @@ export default function ClaimBuilder() {
     }
   }, [currentStep, conditions]);
 
+  // SSN hydration rail: fetch profile from API on mount and populate sessionStorage
+  // if it is empty (e.g. new browser session, different tab, session expiry + re-login).
+  // getUserProfile() reads sessionStorage, so once populated here all downstream
+  // print/preview calls will have the correct SSN without requiring the user to
+  // re-enter it on the Profile page every session.
+  useEffect(() => {
+    const hydrate = async () => {
+      const existing = sessionStorage.getItem("sessionSSN");
+      if (existing) return; // Already set this session — nothing to do
+      try {
+        const { getProfile } = await import("../lib/api");
+        const profile = await getProfile();
+        const apiSsn: string = (profile as any)?.ssn ?? "";
+        if (apiSsn) {
+          const formatted = `${apiSsn.slice(0, 3)}-${apiSsn.slice(3, 5)}-${apiSsn.slice(5, 9)}`;
+          sessionStorage.setItem("sessionSSN", formatted);
+        }
+      } catch (_) {
+        // Non-fatal: SSN hydration failure should never block the Claim Builder
+      }
+    };
+    hydrate();
+  }, []);
+
   // Route guard: Check workflow progress
   useEffect(() => {
     const progress = getWorkflowProgress();

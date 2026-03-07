@@ -582,16 +582,22 @@ export async function registerRoutes(
       
       const dbUpdates = apiUpdatesToDbUpdates(updates);
 
-      // SSN is session-only (HIPAA) — never persist to the database
-      delete dbUpdates.ssn;
+      // SSN: strip formatting (dashes) before saving so DB stores digits-only ("123456789").
+      // The API returns it only to the authenticated owner (dbUserToApiUser), ensuring privacy.
+      // Do NOT delete it — persisting to DB is required so it survives cross-session/tab navigation.
+      if (dbUpdates.ssn !== undefined) {
+        // Normalise: keep digits only, or set null if empty string
+        const digits = String(dbUpdates.ssn ?? "").replace(/\D/g, "");
+        dbUpdates.ssn = digits || null;
+      }
 
       // Include email so a new row can be created if user doesn't exist yet
       if (user.email && !dbUpdates.email) {
         dbUpdates.email = user.email;
       }
 
-      // If there are no fields left to save after stripping SSN, return current profile
-      if (Object.keys(dbUpdates).filter(k => k !== 'email').length === 0) {
+      // If there are no meaningful fields to save (ignoring the auto-added email), skip the DB write
+      if (Object.keys(dbUpdates).filter(k => k !== 'email' && k !== 'ssn').length === 0 && !dbUpdates.ssn) {
         const current = dbUser ? dbUserToApiUser(dbUser) : { id: user.id, email: user.email };
         return res.json(current);
       }
