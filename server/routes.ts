@@ -1661,9 +1661,13 @@ export async function registerRoutes(
 
       if (needsNewCustomer) {
         const customer = await stripeService.createCustomer(user.email, effectiveUserId);
-        // Update the real DB row (by the row's actual id, using service-level client)
-        await storage.updateUser(effectiveUserId, { stripeCustomerId: customer.id });
         customerId = customer.id;
+        // Persist new Stripe customer id to DB — non-fatal if it fails (checkout still proceeds)
+        try {
+          await storage.updateUser(effectiveUserId, { stripeCustomerId: customer.id });
+        } catch (dbErr: any) {
+          console.warn("[CHECKOUT] Could not save Stripe customer id to DB:", dbErr?.message);
+        }
       }
 
       // Create checkout session with metadata so webhook can update user tier

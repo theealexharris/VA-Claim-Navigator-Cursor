@@ -57,13 +57,13 @@ export class StripeService {
   async customerExists(customerId: string): Promise<boolean> {
     const stripe = await getUncachableStripeClient();
     try {
-      await stripe.customers.retrieve(customerId);
-      return true;
-    } catch (error: any) {
-      if (error?.code === 'resource_missing' || error?.statusCode === 404) {
-        return false;
-      }
-      throw error;
+      const customer = await stripe.customers.retrieve(customerId);
+      // Also treat soft-deleted customers as non-existent so a fresh one is created
+      return !(customer as any).deleted;
+    } catch {
+      // Any error (404, resource_missing, network, wrong mode, etc.) → customer doesn't exist
+      // This is a read-only check so failing safe is the correct behavior
+      return false;
     }
   }
 
